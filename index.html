@@ -145,13 +145,12 @@ const TEST_MODE = false;   // set true to practise without Paystack (nothing is 
 /* ID upload from Backend: POST /api/bookings/:bookingId/id-verification (photo sent as a file upload).
    Backend has not said which field name they read the photo from. We send 'idDocument'.
    If Backend's reply says the file is missing, change 'field' to the name they use. */
-const ID = { uploadPath: '/api/bookings/:bookingId/id-verification', field: 'idDocument',
-             alt: ['document', 'idImage', 'image', 'file', 'idPhoto', 'photo', 'idCard', 'idFile', 'id', 'idDoc'] };   // tried in turn if Backend says 'Unexpected file field'
+const ID = { uploadPath: '/api/bookings/:bookingId/id-verification', photoField: 'photo' };   // tried in turn if Backend says 'Unexpected file field'
 const PAYMENT = { initPath: '/api/payment/initialize', verifyPath: '/api/payment/verify' };   // received from Backend
 
 /* ============ 2. APP MEMORY ============ */
 const S = { token: null, user: null, view: 'home', mode: 'in', hotels: [], hotel: '', rooms: [], pick: '',
-            from: '', to: '', guests: 1, pending: null, bookings: [], checkedIn: {}, requests: [], offers: [],
+            from: '', to: '', guests: 1, pending: null, bookings: [], checkedIn: {}, requests: [], offers: [], points: 0, roomCodes: {},
             error: '', ok: '', info: '', busy: false, next: '', idDone: {}, confirmed: null, loaded: false, hotelsError: '' };
 /* The sign-in is kept for this browser tab only, so the guest is still signed in when Paystack sends them back. */
 const store = {
@@ -189,23 +188,20 @@ const api = {
   hotels: async () => pick(await call('/api/hotels'), 'hotels'),
   rooms: async id => pick(await call('/api/rooms/hotel/' + id), 'rooms'),
   myBookings: async () => pick(await call('/api/bookings/my-bookings'), 'bookings'),
+  guestPoints: async () => call('/api/guests/points'),
+  myRequests: async () => call('/api/requests/my-requests'),
+  addRequest: async (type, note) => call('/api/requests', { method: 'POST', body: { type, note } }),
+  verifyId: async (bookingId, idType, selectedFile) => {
+    const formData = new FormData();
+    formData.append('idType', idType);
+    formData.append('photo', selectedFile);
+    return call('/api/bookings/' + encodeURIComponent(bookingId) + '/id-verification', { method: 'POST', body: formData });
+  },
+  roomCode: async bookingId => call('/api/bookings/' + encodeURIComponent(bookingId) + '/room-code'),
   createBooking: async b => { const d = await call('/api/bookings', { method: 'POST', body: b }); return d.booking || d.data || d; } // proposed by Backend
 };
 
-/* ============ 4. STILL FAKE (Backend has not finished these) ============
-   Replace each one when Backend sends the final link:
-   check-in and ID upload, access code, service requests, offers. */
-const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const sid = x => String(x ?? '').replace(/[^\w-]/g, '');   // ids are only used as letters, digits, - and _
-const safeUrl = u => /^https:\/\/[^\s'"()<>\\]+$/.test(String(u || '')) ? u : '';
-const wait = ms => new Promise(r => setTimeout(r, ms));
-const fake = {
-  async checkIn(file) { await wait(1200); if (!file) throw new Error('Add a photo of your ID first.'); },
-  async accessCode() { await wait(300); return { code: '4821' }; },
-  async addRequest(type, note) { await wait(400); return { id: Date.now(), type, note, status: 'Pending' }; },
-  async offers() { await wait(100); return ['20% off a spa session this week', 'Free breakfast on your next stay', 'Late checkout on Sunday']; }
-};
-
+/* Guest services use live Backend endpoints. */
 /* ============ 5. SMALL HELPERS ============ */
 const naira = n => '₦' + Number(n || 0).toLocaleString('en-NG');
 const day = x => x ? new Date(x).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
@@ -437,24 +433,20 @@ function toVerify() {
 /* ID check is a fake for now. In the Figma flow it happens before payment; Backend planned it at check-in. */
 function doIdVerify() {
   const file = document.getElementById('idf')?.files[0];
+  const idType = document.getElementById('idType')?.value;
   run(async () => {
-    if (!file) throw new Error("We couldn't read your ID. Add a clear photo and try again.");
-    if (!ID.uploadPath) throw new Error('ID verification is not connected to Backend yet, so payment is blocked. Ask Backend for the ID upload link.');
-    const id = S.pending._id, url = ID.uploadPath.replace(':bookingId', encodeURIComponent(id));
-    let d, last = null;
-    for (const f of [ID.field, ...ID.alt.filter(x => x !== ID.field)]) {
-      const fd = new FormData(); fd.append(f, file);
-      try { d = await call(url, { method: 'POST', body: fd }); ID.field = f; last = null; console.info('ID photo field that Backend accepted:', f); break; }
-      catch (e) { last = e; if (!/unexpected.*field/i.test(e.message)) throw e; }
-    }
-    if (last) throw new Error('Backend did not accept the photo field name. Ask Backend which field name the ID upload expects.');
+    if (!file) throw new Error('Choose a clear photo of your ID before continuing.');
+    if (!idType) throw new Error('Choose the type of identification document.');
+    const bookingId = S.pending?._id;
+    if (!bookingId) throw new Error('We could not identify the booking for this ID verification.');
+    const d = await api.verifyId(bookingId, idType, file);
     const fromReply = [d.booking, d.data].find(x => x && typeof x === 'object' && x.idVerificationStatus);
     S.bookings = await api.myBookings().catch(() => S.bookings);
-    S.pending = { ...S.pending, ...(fromReply || {}), ...(S.bookings.find(x => x._id === id) || {}) };
-    const st = S.pending.idVerificationStatus;
-    if (st === 'Rejected') throw new Error('Your ID was rejected. Please upload a clearer photo.');
-    if (st === 'Pending' || st === 'NeedsReview') { S.ok = 'ID received. We are checking it. You can pay once it is verified.'; return; }
-    S.idDone[S.pending._id] = true; S.view = 'pay';
+    S.pending = { ...S.pending, ...(fromReply || {}), ...(S.bookings.find(x => x._id === bookingId) || {}) };
+    const status = S.pending.idVerificationStatus || d.idVerificationStatus || d.data?.idVerificationStatus;
+    if (status === 'Rejected') throw new Error('Your ID was rejected. Please upload a clearer photo.');
+    if (status === 'Pending' || status === 'NeedsReview') { S.ok = 'Your ID photo was received and is awaiting verification.'; return; }
+    S.idDone[bookingId] = true; S.view = 'pay';
   });
 }
 /* Payment start (below) */
