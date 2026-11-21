@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Guest app starter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#14201F;--lagoon:#0F3D3E;--mist:#EEF3F2;--brass:#B8893B;--line:#CBD8D6;--bad:#B3261E;--ok:#1F7A4D;--card:#fff}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 Figtree,system-ui,sans-serif;color:var(--ink);background:var(--mist)}
+h1,h2,h3{font-family:'Bricolage Grotesque',Georgia,serif;margin:0 0 .5rem;line-height:1.15}
+header{background:var(--lagoon);color:#fff;padding:.9rem 1rem 0}
+header b{font-family:'Bricolage Grotesque',Georgia,serif;font-size:1.25rem}
+nav{display:flex;gap:.25rem;overflow-x:auto;margin-top:.6rem}
+nav button{background:none;border:0;color:#bcd3d0;padding:.6rem .9rem;font:inherit;font-weight:500;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
+nav button.on{color:#fff;border-color:var(--brass)}
+main{max-width:640px;margin:0 auto;padding:1.25rem 1rem 3rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1.1rem;margin-bottom:1rem}
+label{display:block;font-weight:600;margin:.8rem 0 .25rem}
+input,select,textarea{width:100%;font:inherit;padding:.65rem;border:1px solid var(--line);border-radius:8px;background:#fff}
+input[type=checkbox],input[type=radio]{width:auto}
+button.go{background:var(--lagoon);color:#fff;border:0;border-radius:8px;padding:.8rem 1.1rem;font:inherit;font-weight:600;cursor:pointer;margin-top:1rem;width:100%}
+button.go:disabled{opacity:.5;cursor:wait}
+:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+.room{display:flex;gap:.7rem;align-items:center;border:1px solid var(--line);border-radius:8px;padding:.8rem;margin-top:.5rem;cursor:pointer}
+.room:has(input:checked){border-color:var(--lagoon);background:#E3EEEC}
+.room span:last-child{margin-left:auto;font-weight:600}
+.msg{padding:.7rem .9rem;border-radius:8px;margin-top:.9rem;font-weight:500}
+.msg.bad{background:#FBE9E7;color:var(--bad)}.msg.ok{background:#E2F3EA;color:var(--ok)}
+.muted{color:#55696A}
+.chip{display:inline-block;padding:.1rem .6rem;border-radius:99px;background:#E3EEEC;font-size:.85rem;font-weight:600}
+.bar{height:10px;background:var(--line);border-radius:99px;overflow:hidden;margin:.6rem 0}
+.bar i{display:block;height:100%;background:var(--brass)}
+.big{font-family:'Bricolage Grotesque',Georgia,serif;font-size:2.6rem;font-weight:700}
+.key{background:var(--lagoon);padding:2rem 1rem;font-size:1.2rem}
+</style>
+</head>
+<body>
+<header><b>Lagoon Hotel</b><nav id="nav"></nav></header>
+<main id="app"></main>
+
+<script>
+/* ============ 1. FAKE DATA LAYER ============
+   Every function below pretends to be the Backend.
+   When Backend shares its API guide, replace each body with a real fetch() call.
+   The screens further down do not need to change. */
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const api = {
+  async login(email, pw) {
+    await wait(400);
+    if (!email || !pw) throw new Error('Enter your email and password.');
+    return { name: 'Amaka Obi', email };
+  },
+  async rooms() {
+    await wait(300);
+    return [
+      { id: 1, name: 'Standard Room', price: 45000 },
+      { id: 2, name: 'Deluxe Room', price: 70000 },
+      { id: 3, name: 'Executive Suite', price: 120000 }
+    ];
+  },
+  async pay(amount, shouldFail) {
+    await wait(1000);
+    if (shouldFail) throw new Error("Payment didn't go through. You were not charged. Try again or use another card.");
+    return { ref: 'PSK-' + Date.now() };
+  },
+  async checkIn(file) {
+    await wait(1300);
+    if (!file) throw new Error('Add a photo of your ID first.');
+    return { room: 'Room 214' };
+  },
+  async addRequest(type, note) {
+    await wait(400);
+    return { id: Date.now(), type, note, status: 'Received' };
+  },
+  async offers() {
+    await wait(200);
+    return ['20% off a spa session this week', 'Free breakfast on your next stay', 'Late checkout on Sunday'];
+  }
+};
+
+/* ============ 2. APP MEMORY ============ */
+const S = { user: null, view: 'login', rooms: [], pick: 1, from: '', to: '', booking: null,
+            roomNo: null, requests: [], points: 1200, error: '', ok: '', busy: false, unlocked: false };
+const naira = n => '₦' + n.toLocaleString('en-NG');
+const nights = () => Math.max(0, Math.round((new Date(S.to) - new Date(S.from)) / 864e5)) || 0;
+const picked = () => S.rooms.find(r => r.id === S.pick);
+const total = () => nights() * (picked()?.price || 0);
+const tier = () => S.points >= 5000 ? 'Platinum' : S.points >= 2000 ? 'Gold' : 'Silver';
+const nextAt = () => S.points >= 5000 ? 5000 : S.points >= 2000 ? 5000 : 2000;
+const msg = () => (S.error ? `<div class="msg bad" role="alert">${S.error}</div>` : '') + (S.ok ? `<div class="msg ok">${S.ok}</div>` : '');
+const go = v => { S.view = v; S.error = ''; S.ok = ''; S.busy = false; draw(); };
+const empty = (text, btn, to) => `<div class="card"><p>${text}</p><button class="go" onclick="go('${to}')">${btn}</button></div>`;
+
+/* ============ 3. SCREENS ============ */
+const screens = {
+  login: () => `<div class="card"><h2>Welcome</h2><p class="muted">Sign in to book, check in and manage your stay.</p>
+    <label for="em">Email</label><input id="em" type="email" value="amaka@example.com">
+    <label for="pw">Password</label><input id="pw" type="password" value="demo">
+    ${msg()}<button class="go" onclick="doLogin()">Sign in</button></div>`,
+
+  book: () => `<h2>Book a room</h2><div class="card">
+    <label for="from">Check-in date</label><input id="from" type="date" value="${S.from}" onchange="S.from=this.value;draw()">
+    <label for="to">Check-out date</label><input id="to" type="date" value="${S.to}" onchange="S.to=this.value;draw()">
+    ${S.rooms.map(r => `<label class="room"><input type="radio" name="room" ${r.id === S.pick ? 'checked' : ''} onchange="S.pick=${r.id};draw()"><span>${r.name}</span><span>${naira(r.price)} / night</span></label>`).join('')}
+    <p><b>${nights()} night(s)</b> · Total <b>${naira(total())}</b></p>${msg()}
+    <button class="go" onclick="toPay()">Continue to payment</button></div>`,
+
+  pay: () => `<h2>Payment</h2><div class="card"><p>${picked().name}, ${nights()} night(s)</p>
+    <p class="big">${naira(total())}</p>
+    <label><input type="checkbox" id="fail"> Test a failed payment (for testing only)</label>
+    ${msg()}<button class="go" id="paybtn" onclick="doPay()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Processing…' : 'Pay ' + naira(total())}</button>
+    <button class="go" style="background:none;color:var(--ink);border:1px solid var(--line)" onclick="go('book')">Back</button></div>`,
+
+  checkin: () => !S.booking ? empty('You have no booking yet. Book a room to check in online.', 'Book a room', 'book') :
+    S.roomNo ? `<h2>Check in</h2><div class="card"><div class="msg ok">You are checked in. Your room is ${S.roomNo}.</div>
+      <button class="go" onclick="go('key')">Open room key</button></div>` :
+    `<h2>Check in</h2><div class="card"><p>Booking ${S.booking.ref}. Add a photo of your passport, driver's licence or national ID.</p>
+      <label for="idf">ID photo</label><input id="idf" type="file" accept="image/*">${msg()}
+      <button class="go" id="idbtn" onclick="doCheckIn()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking your ID…' : 'Verify ID and check in'}</button></div>`,
+
+  key: () => !S.roomNo ? empty('Check in first. Your room key appears here afterwards.', 'Go to check-in', 'checkin') :
+    `<h2>Room key</h2><div class="card key" style="color:#fff;text-align:center"><p class="big" style="margin:0">${S.roomNo}</p>
+      <p>${S.unlocked ? 'Unlocked. Push the door open.' : 'Hold your phone near the door, then tap below.'}</p>
+      <button class="go" style="background:var(--brass)" onclick="S.unlocked=true;draw();setTimeout(()=>{S.unlocked=false;if(S.view==='key')draw()},8000)">${S.unlocked ? 'Unlocked' : 'Unlock door'}</button></div>`,
+
+  requests: () => `<h2>Requests</h2><div class="card"><label for="ty">What do you need?</label>
+    <select id="ty"><option>Housekeeping</option><option>Room service</option><option>Maintenance</option><option>Other</option></select>
+    <label for="nt">Details</label><textarea id="nt" rows="3" placeholder="e.g. Two extra towels, please"></textarea>${msg()}
+    <button class="go" onclick="doRequest()">Send request</button></div>
+    ${S.requests.length ? S.requests.map(r => `<div class="card"><b>${r.type}</b> <span class="chip">${r.status}</span><p class="muted" style="margin:.3rem 0 0">${r.note || 'No details added'}</p></div>`).join('')
+      : '<p class="muted">No requests yet. Send one above and track it here.</p>'}`,
+
+  rewards: () => `<h2>Rewards</h2><div class="card"><p class="muted" style="margin:0">${tier()} member</p>
+    <p class="big" style="margin:0">${S.points.toLocaleString()} points</p>
+    <div class="bar"><i style="width:${Math.min(100, S.points / nextAt() * 100)}%"></i></div>
+    <p class="muted" style="margin:0">${S.points >= 5000 ? 'You have reached the top tier.' : (nextAt() - S.points) + ' points to the next tier'}</p></div>
+    <h3>Offers for you</h3>${S.offers.map(o => `<div class="card">${o}</div>`).join('')}`
+};
+
+/* ============ 4. ACTIONS ============ */
+async function run(fn) {
+  S.busy = true; S.error = ''; draw();
+  try { await fn(); } catch (e) { S.error = e.message; }
+  S.busy = false; draw();
+}
+const doLogin = () => run(async () => {
+  S.user = await api.login(document.getElementById('em').value, document.getElementById('pw').value);
+  [S.rooms, S.offers] = await Promise.all([api.rooms(), api.offers()]);
+  const d = x => new Date(Date.now() + x * 864e5).toISOString().slice(0, 10);
+  S.from = d(7); S.to = d(9); S.view = 'book';
+});
+function toPay() {
+  if (nights() < 1) { S.error = 'Check-out must be after check-in.'; return draw(); }
+  go('pay');
+}
+const doPay = () => { const f = document.getElementById('fail').checked; return run(async () => {
+  const r = await api.pay(total(), f);
+  S.booking = { ref: r.ref }; S.points += Math.round(total() / 1000);
+  S.view = 'checkin'; S.ok = 'Payment received. Your booking is confirmed.';
+}); };
+const doCheckIn = () => run(async () => {
+  const r = await api.checkIn(document.getElementById('idf').files[0]);
+  S.roomNo = r.room; S.ok = '';
+});
+const doRequest = async () => {
+  const r = await api.addRequest(document.getElementById('ty').value, document.getElementById('nt').value);
+  S.requests.unshift(r); S.ok = 'Request sent.'; draw();
+  setTimeout(() => { r.status = 'In progress'; if (S.view === 'requests') draw(); }, 5000);
+};
+
+/* ============ 5. DRAWING ============ */
+const tabs = [['book', 'Book'], ['checkin', 'Check in'], ['key', 'Room key'], ['requests', 'Requests'], ['rewards', 'Rewards']];
+function draw() {
+  document.getElementById('nav').innerHTML = S.user
+    ? tabs.map(([v, t]) => `<button class="${S.view === v || (S.view === 'pay' && v === 'book') ? 'on' : ''}" onclick="go('${v}')">${t}</button>`).join('') : '';
+  document.getElementById('app').innerHTML = screens[S.view]();
+}
+draw();
+</script>
+</body>
+</html>
