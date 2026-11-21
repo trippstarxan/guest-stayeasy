@@ -1,0 +1,3 @@
+[build]
+  command = "mkdir -p dist && cp guest-app-starter.html dist/index.html"
+  publish = "dist"
