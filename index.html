@@ -104,7 +104,10 @@ const API = 'https://hotel-booking-eagg.onrender.com';
 /* Paystack links from Backend: POST /api/payment/initialize {bookingId} returns data.authorizationUrl;
    POST /api/payment/verify {reference}. Set TEST_MODE to true to practise without paying. */
 const TEST_MODE = false;   // set true to practise without Paystack (nothing is charged)
-const ID = { uploadPath: null, field: 'idDocument' };   // Backend has not sent the ID upload link yet
+/* ID upload from Backend: POST /api/bookings/:bookingId/id-verification (photo sent as a file upload).
+   Backend has not said which field name they read the photo from. We send 'idDocument'.
+   If Backend's reply says the file is missing, change 'field' to the name they use. */
+const ID = { uploadPath: '/api/bookings/:bookingId/id-verification', field: 'idDocument' };
 const PAYMENT = { initPath: '/api/payment/initialize', verifyPath: '/api/payment/verify' };   // received from Backend
 
 /* ============ 2. APP MEMORY ============ */
@@ -363,10 +366,11 @@ function doIdVerify() {
   run(async () => {
     if (!file) throw new Error("We couldn't read your ID. Add a clear photo and try again.");
     if (!ID.uploadPath) throw new Error('ID verification is not connected to Backend yet, so payment is blocked. Ask Backend for the ID upload link.');
-    const fd = new FormData(); fd.append(ID.field, file); fd.append('bookingId', S.pending._id);
-    await call(ID.uploadPath, { method: 'POST', body: fd });   // adjust names when Backend confirms
+    const id = S.pending._id, fd = new FormData(); fd.append(ID.field, file);
+    const d = await call(ID.uploadPath.replace(':bookingId', encodeURIComponent(id)), { method: 'POST', body: fd });
+    const fromReply = [d.booking, d.data].find(x => x && typeof x === 'object' && x.idVerificationStatus);
     S.bookings = await api.myBookings().catch(() => S.bookings);
-    S.pending = S.bookings.find(x => x._id === S.pending._id) || S.pending;
+    S.pending = { ...S.pending, ...(fromReply || {}), ...(S.bookings.find(x => x._id === id) || {}) };
     const st = S.pending.idVerificationStatus;
     if (st === 'Rejected') throw new Error('Your ID was rejected. Please upload a clearer photo.');
     if (st === 'Pending' || st === 'NeedsReview') { S.ok = 'ID received. We are checking it. You can pay once it is verified.'; return; }
