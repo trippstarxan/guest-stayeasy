@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StayEasy guest app starter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{/* StayEasy design system (from Figma) */--primary:#633541;--secondary:#D9C5AC;--ink:#302832;--rose:#C18F91;--slate:#899BA8;--bg:#F8F3EC;--card:#FEFDFB;--line:#D9C5AC;--field:#A1868D;--soft:#F0E8DE;--muted:#59535B;--bad:#B3261E;--ok:#1F7A4D}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 Manrope,system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+h1,h2,h3{font-family:Manrope,system-ui,sans-serif;font-weight:800;margin:0 0 .5rem;line-height:1.15}
+header{background:var(--primary);color:#fff;padding:.9rem 1rem 0}
+header b{font-weight:800;font-size:1.25rem}
+nav{display:flex;gap:.25rem;overflow-x:auto;margin-top:.6rem}
+nav button{background:none;border:0;color:#E0D7D9;padding:.6rem .9rem;font:inherit;font-weight:500;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
+nav button.on{color:#fff;border-color:var(--rose)}
+.wake{background:var(--secondary);padding:.6rem 1rem;text-align:center;font-weight:600}
+main{max-width:640px;margin:0 auto;padding:1.25rem 1rem 3rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1.1rem;margin-bottom:1rem}
+label{display:block;font-weight:600;margin:.8rem 0 .25rem}
+input,select,textarea{width:100%;font:inherit;padding:.65rem;border:1px solid var(--field);border-radius:8px;background:#fff}
+input[type=checkbox],input[type=radio]{width:auto}
+button.go{background:var(--primary);color:#fff;border:0;border-radius:8px;padding:.8rem 1.1rem;font:inherit;font-weight:600;cursor:pointer;margin-top:1rem;width:100%}
+button.go:disabled{opacity:.5;cursor:wait}
+button.alt{background:none;color:var(--ink);border:1px solid var(--field)}
+:focus-visible{outline:3px solid var(--rose);outline-offset:2px}
+.room{display:flex;gap:.7rem;align-items:center;border:1px solid var(--line);border-radius:8px;padding:.8rem;margin-top:.5rem;cursor:pointer}
+.room:has(input:checked){border-color:var(--primary);background:var(--soft)}
+.room span:last-child{margin-left:auto;font-weight:600}
+.msg{padding:.7rem .9rem;border-radius:8px;margin-top:.9rem;font-weight:500}
+.msg.bad{background:#FBE9E7;color:var(--bad)}.msg.ok{background:#E2F3EA;color:var(--ok)}.msg.info{background:var(--soft)}
+.muted{color:var(--muted)}
+.chip{display:inline-block;padding:.1rem .6rem;border-radius:99px;background:var(--secondary);font-size:.85rem;font-weight:600}
+.big{font-weight:800;font-size:2.6rem}
+.key{background:var(--primary);color:#fff;text-align:center;padding:2rem 1rem}
+.hero{background:var(--primary);color:#fff;border-radius:14px;padding:2rem 1.2rem;margin-bottom:1rem}.hero h1{font-size:2.2rem;margin:0 0 .4rem}.hero p{margin:0;color:#E0D7D9}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:.7rem}.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1rem;text-align:left;font:inherit;color:var(--ink);cursor:pointer}.tile b{display:block;margin-bottom:.2rem}.tile span{color:var(--muted);font-size:.9rem}
+.back{margin-bottom:.6rem}.steps{padding-left:1.2rem;margin:.4rem 0 0}
+.link{background:none;border:0;color:var(--primary);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer;padding:0}
+</style>
+</head>
+<body>
+<header><b>StayEasy</b><nav id="nav"></nav></header>
+<div id="wake" class="wake" hidden>Waking up the server. This can take up to a minute…</div>
+<main id="app"></main>
+
+<script>
+/* ============ 1. SETTINGS ============ */
+const API = 'https://hotel-booking-eagg.onrender.com';
+/* Paystack links: Backend is still finalising these. When they send them, fill in the two paths
+   (for example '/api/payments/initialize') and adjust the reply names in startPayment() and verifyReturn().
+   While they are null the app runs payment in TEST MODE (nothing is really paid). */
+const PAYMENT = { initPath: null, verifyPath: null };
+
+/* ============ 2. APP MEMORY ============ */
+const S = { token: null, user: null, view: 'home', mode: 'in', hotels: [], hotel: '', rooms: [], pick: '',
+            from: '', to: '', guests: 1, pending: null, bookings: [], checkedIn: {}, requests: [], offers: [],
+            error: '', ok: '', info: '', busy: false, next: '', idDone: {}, confirmed: null, loaded: false, hotelsError: '' };
+/* The sign-in is kept for this browser tab only, so the guest is still signed in when Paystack sends them back. */
+const store = {
+  get() { try { return JSON.parse(sessionStorage.getItem('stayeasy') || 'null'); } catch { return null; } },
+  set(v) { try { v ? sessionStorage.setItem('stayeasy', JSON.stringify(v)) : sessionStorage.removeItem('stayeasy'); } catch {} }
+};
+
+/* ============ 3. TALKING TO BACKEND (real) ============ */
+async function call(path, { method = 'GET', body } = {}) {
+  const wake = document.getElementById('wake');
+  const timer = setTimeout(() => { wake.hidden = false; }, 4000);   // free servers can sleep
+  try {
+    const res = await fetch(API + path, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    let data = {}; try { data = await res.json(); } catch {}
+    if (!res.ok || data.success === false) throw new Error(data.message || 'Something went wrong. Please try again.');
+    return data;
+  } catch (e) {
+    if (e instanceof TypeError) throw new Error("Can't reach the server. Check your internet and try again.");
+    throw e;
+  } finally { clearTimeout(timer); wake.hidden = true; }
+}
+const pick = (d, k) => Array.isArray(d) ? d : (d[k] || d.data || []);
+const api = {
+  login: (email, password) => call('/api/auth/login', { method: 'POST', body: { email, password } }),
+  register: b => call('/api/auth/register', { method: 'POST', body: b }),
+  hotels: async () => pick(await call('/api/hotels'), 'hotels'),
+  rooms: async id => pick(await call('/api/rooms/hotel/' + id), 'rooms'),
+  myBookings: async () => pick(await call('/api/bookings/my-bookings'), 'bookings'),
+  createBooking: async b => { const d = await call('/api/bookings', { method: 'POST', body: b }); return d.booking || d.data || d; } // proposed by Backend
+};
+
+/* ============ 4. STILL FAKE (Backend has not finished these) ============
+   Replace each one when Backend sends the final link:
+   check-in and ID upload, access code, service requests, offers. */
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const fake = {
+  async checkIn(file) { await wait(1200); if (!file) throw new Error('Add a photo of your ID first.'); },
+  async accessCode() { await wait(300); return { code: '4821' }; },
+  async addRequest(type, note) { await wait(400); return { id: Date.now(), type, note, status: 'Pending' }; },
+  async offers() { await wait(100); return ['20% off a spa session this week', 'Free breakfast on your next stay', 'Late checkout on Sunday']; }
+};
+
+/* ============ 5. SMALL HELPERS ============ */
+const naira = n => '₦' + Number(n || 0).toLocaleString('en-NG');
+const day = x => x ? new Date(x).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+const nights = () => Math.max(0, Math.round((new Date(S.to) - new Date(S.from)) / 864e5)) || 0;
+const room = () => S.rooms.find(r => r._id === S.pick);
+const estimate = () => nights() * (room()?.pricePerNight || 0);
+const reqLabel = s => ({ Pending: 'Received', 'In Progress': 'In progress', Completed: 'Done', Cancelled: 'Cancelled' }[s] || s);
+const roomNo = b => b.room?.roomNumber || 'to be assigned';
+const hotelName = b => b.hotel?.name || 'Hotel';
+const testMode = () => !PAYMENT.initPath;
+/* Only a Confirmed booking can check in. In test mode a Pending one is allowed so you can try the screens. */
+const idOk = b => !!S.idDone[b._id];
+const eligible = b => b.bookingStatus === 'Confirmed' || (testMode() && b.bookingStatus === 'Pending');
+const msg = () => (S.info ? `<div class="msg info">${S.info}</div>` : '') + (S.error ? `<div class="msg bad" role="alert">${S.error}</div>` : '') + (S.ok ? `<div class="msg ok">${S.ok}</div>` : '');
+const authed = ['dashboard','bookings','checkin','key','requests','offers','rewards','idVerify','pay','paymentDone','confirmed'];
+const go = v => {
+  S.error = ''; S.ok = ''; S.info = ''; S.busy = false;
+  if (authed.includes(v) && !S.token) { S.next = v; S.mode = 'in'; S.info = 'Sign in or create an account to continue.'; v = 'login'; }
+  S.view = v; draw(); window.scrollTo(0, 0);
+};
+const backTo = (to, label) => `<button class="link back" onclick="go('${to}')">← ${label}</button>`;
+const empty = (text, btn, to) => `<div class="card"><p>${text}</p><button class="go" onclick="go('${to}')">${btn}</button></div>`;
+
+/* ============ 6. SCREENS (follows the StayEasy sitemap and user flow in Figma) ============
+   Book path:  Home > Rooms > Room details > Booking details > Sign in/up > ID verification > Payment > Booking confirmation
+   Pre-arrival path:  Home > Sign in/up > Dashboard > Pre-arrival check-in > Digital room access > Recommendations > Loyalty */
+const screens = {
+  home: () => `<div class="hero"><h1>Stay easy.</h1><p>Book your room, check in before you arrive and open your door from your phone.</p></div>
+    <div class="tiles"><button class="tile" onclick="go('rooms')"><b>Book now</b><span>Browse rooms and reserve</span></button>
+    <button class="tile" onclick="go('dashboard')"><b>Pre-arrival</b><span>Check in before you arrive</span></button></div>
+    <div class="card" style="margin-top:1rem"><h3>How it works</h3><ol class="steps"><li>Choose a room and your dates</li><li>Verify your ID and pay securely</li><li>Check in online and get your room code</li></ol></div>`,
+
+  login: () => `<div class="card"><h2>${S.mode === 'up' ? 'Create your account' : 'Welcome back'}</h2>
+    <p class="muted">${S.mode === 'up' ? 'Join to book, check in and earn rewards.' : 'Sign in to continue.'}</p>
+    ${S.mode === 'up' ? `<label for="fn">First name</label><input id="fn" autocomplete="given-name">
+    <label for="ln">Last name</label><input id="ln" autocomplete="family-name">
+    <label for="ph">Phone</label><input id="ph" type="tel" autocomplete="tel">` : ''}
+    <label for="em">Email</label><input id="em" type="email" autocomplete="email">
+    <label for="pw">Password</label><input id="pw" type="password" autocomplete="${S.mode === 'up' ? 'new-password' : 'current-password'}">
+    ${msg()}<button class="go" onclick="doAuth()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Please wait…' : S.mode === 'up' ? 'Create account' : 'Sign in'}</button>
+    <p style="text-align:center">${S.mode === 'up' ? 'Have an account?' : 'New here?'}
+      <button class="link" onclick="S.mode='${S.mode === 'up' ? 'in' : 'up'}';S.error='';draw()">${S.mode === 'up' ? 'Sign in' : 'Create an account'}</button></p></div>`,
+
+  rooms: () => `<h2>Rooms</h2>${S.hotels.length > 1 ? `<label for="ht">Hotel</label><select id="ht" onchange="changeHotel(this.value)">${S.hotels.map(h => `<option value="${h._id}" ${h._id === S.hotel ? 'selected' : ''}>${h.name}</option>`).join('')}</select>` : ''}
+    ${S.hotelsError ? `<div class="msg bad">${S.hotelsError}</div>` : !S.loaded ? '<p class="muted">Loading rooms…</p>' : ''}${msg()}
+    ${S.rooms.filter(r => r.isAvailable !== false).map(r => `<div class="card"><b>${r.roomType || 'Room'}</b> <span class="chip">Room ${r.roomNumber || ''}</span>
+      <p class="muted" style="margin:.3rem 0">${r.description || ''}</p><p style="margin:0"><b>${naira(r.pricePerNight)}</b> / night · up to ${r.capacity || 2} guests</p>
+      <button class="go" onclick="S.pick='${r._id}';go('roomDetail')">View details</button></div>`).join('')}
+    ${S.loaded && !S.rooms.length && !S.hotelsError ? '<p class="muted">No rooms found for this hotel yet.</p>' : ''}`,
+
+  roomDetail: () => { const r = room(); return !r ? empty('Choose a room first.', 'See rooms', 'rooms') :
+    `${backTo('rooms', 'All rooms')}<h2>${r.roomType || 'Room'}</h2><div class="card"><p class="muted" style="margin-top:0">Room ${r.roomNumber || ''} · up to ${r.capacity || 2} guests</p>
+    <p>${r.description || 'A comfortable room for your stay.'}</p>
+    ${r.amenities?.length ? `<p><b>Includes:</b> ${[].concat(r.amenities).join(', ')}</p>` : ''}
+    <p class="big" style="font-size:1.8rem;margin:.3rem 0">${naira(r.pricePerNight)} <span class="muted" style="font-size:1rem;font-weight:500">/ night</span></p>
+    <button class="go" onclick="go('bookingDetails')">Select this room</button></div>`; },
+
+  bookingDetails: () => { const r = room(); return !r ? empty('Choose a room first.', 'See rooms', 'rooms') :
+    `${backTo('roomDetail', 'Room details')}<h2>Booking details</h2><div class="card"><p style="margin-top:0"><b>${r.roomType || 'Room'}</b> · Room ${r.roomNumber || ''}</p>
+    <label for="from">Check-in date</label><input id="from" type="date" value="${S.from}" onchange="S.from=this.value;draw()">
+    <label for="to">Check-out date</label><input id="to" type="date" value="${S.to}" onchange="S.to=this.value;draw()">
+    <label for="gs">Guests</label><input id="gs" type="number" min="1" max="${r.capacity || 10}" value="${S.guests}" onchange="S.guests=+this.value||1">
+    <p><b>${nights()} night(s)</b> · Estimated total <b>${naira(estimate())}</b></p>
+    <p class="muted" style="margin:0">The hotel confirms the final amount at the next step.</p>${msg()}
+    <button class="go" onclick="toVerify()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Reserving…' : S.token ? 'Continue' : 'Continue (sign in required)'}</button></div>`; },
+
+  idVerify: () => !S.pending ? empty('Choose a room first.', 'See rooms', 'rooms') : `<h2>Verify your identity</h2><div class="card">
+    <p style="margin-top:0">Add a photo of your passport, driver's licence or national ID. We use it to confirm it's you.</p>
+    <label for="idf">ID photo</label><input id="idf" type="file" accept="image/*">${msg()}
+    <button class="go" onclick="doIdVerify()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking your ID…' : 'Verify my ID'}</button></div>`,
+
+  pay: () => !S.pending ? empty('Choose a room first.', 'See rooms', 'rooms') : `<h2>Payment</h2><div class="card">
+    <p style="margin-top:0">${hotelName(S.pending)}${S.pending.room?.roomType ? ' · ' + S.pending.room.roomType : ''}</p>
+    <p class="big">${naira(S.pending.totalAmount ?? estimate())}</p>
+    ${testMode() ? `<div class="msg info">Test mode: the real Paystack payment is not connected yet, so nothing is charged.</div>
+      <label><input type="checkbox" id="fail"> Test a failed payment</label>` : '<p class="muted">You will be taken to Paystack to pay securely.</p>'}
+    ${msg()}<button class="go" onclick="doPay()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Processing…' : S.error ? 'Try payment again' : 'Pay now'}</button></div>`,
+
+  paymentDone: () => `<h2>Payment</h2><div class="card">${S.busy ? '<p style="margin:0">Confirming your payment…</p>' : msg() + `<button class="go" onclick="go('bookings')">See my bookings</button>`}</div>`,
+
+  confirmed: () => { const b = S.confirmed; return !b ? empty('No booking to show yet.', 'My bookings', 'bookings') :
+    `<h2>Booking confirmed</h2><div class="card"><div class="msg ok" style="margin-top:0">${S.ok || 'Your booking is confirmed.'}</div>
+    <p><b>${hotelName(b)}</b><br>${b.room?.roomType || 'Room'} · ${day(b.checkInDate)} to ${day(b.checkOutDate)}<br>Total ${naira(b.totalAmount)}</p>
+    <p class="muted" style="margin:0">Next: check in online before you arrive and get your room code.</p>
+    <button class="go" onclick="go('checkin')">Pre-arrival check-in</button><button class="go alt" onclick="go('dashboard')">Go to dashboard</button></div>`; },
+
+  dashboard: () => `<h2>Hello${S.user?.firstName ? ', ' + S.user.firstName : ''}</h2>${msg()}
+    <div class="tiles">
+    <button class="tile" onclick="go('bookings')"><b>My bookings</b><span>${S.bookings.length} booking(s)</span></button>
+    <button class="tile" onclick="go('checkin')"><b>Pre-arrival check-in</b><span>Before you arrive</span></button>
+    <button class="tile" onclick="go('key')"><b>Digital room access</b><span>Your room code</span></button>
+    <button class="tile" onclick="go('offers')"><b>Recommendations</b><span>Picked for you</span></button>
+    <button class="tile" onclick="go('rewards')"><b>Loyalty</b><span>${(S.user?.loyaltyPoints || 0).toLocaleString()} points</span></button>
+    <button class="tile" onclick="go('requests')"><b>Service requests</b><span>Housekeeping and more</span></button></div>
+    <button class="go" onclick="go('rooms')">Book another stay</button>`,
+
+  bookings: () => `${backTo('dashboard', 'Dashboard')}<h2>My bookings</h2>${msg()}${S.bookings.length ? S.bookings.map(b => `<div class="card">
+    <b>${hotelName(b)}</b> <span class="chip">${b.bookingStatus}</span>
+    <p class="muted" style="margin:.3rem 0 0">${b.room?.roomType || 'Room'} · ${day(b.checkInDate)} to ${day(b.checkOutDate)} · ${naira(b.totalAmount)}</p></div>`).join('')
+    : empty('You have no bookings yet.', 'Book a room', 'rooms')}`,
+
+  checkin: () => {
+    const el = S.bookings.filter(eligible), todo = el.find(b => !S.checkedIn[b._id]);
+    if (!el.length) return backTo('dashboard', 'Dashboard') + empty('You have no confirmed booking yet. Book and pay to check in online.', 'Book a room', 'rooms');
+    if (!todo) return `${backTo('dashboard', 'Dashboard')}<h2>Check-in confirmed</h2><div class="card"><div class="msg ok" style="margin:0">You are checked in. Room ${roomNo(el[0])}.</div>
+      <button class="go" onclick="go('key')">Get my room code</button></div>`;
+    return `${backTo('dashboard', 'Dashboard')}<h2>Pre-arrival check-in</h2><div class="card"><p style="margin-top:0">${hotelName(todo)}, arriving ${day(todo.checkInDate)}.</p>
+      <label for="arr">Expected arrival time</label><select id="arr"><option>Before 12:00</option><option>12:00 to 15:00</option><option>15:00 to 18:00</option><option>After 18:00</option></select>
+      ${idOk(todo) ? '<p class="msg ok">Your ID is already verified.</p>' : `<label for="idf">ID photo</label><input id="idf" type="file" accept="image/*">`}${msg()}
+      <button class="go" onclick="doCheckIn('${todo._id}')" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking in…' : 'Check in'}</button></div>`;
+  },
+
+  key: () => {
+    const b = S.bookings.find(x => S.checkedIn[x._id]);
+    if (!b) return backTo('dashboard', 'Dashboard') + empty('Check in first. Your room code appears here afterwards.', 'Go to check-in', 'checkin');
+    return `${backTo('dashboard', 'Dashboard')}<h2>Digital room access</h2><div class="card key"><p style="margin:0">Room ${roomNo(b)}</p>
+      <p class="big" style="margin:.2rem 0">${S.checkedIn[b._id].code}</p>
+      <p style="margin:0">Enter this code on the door keypad.<br>Works ${day(b.checkInDate)} to ${day(b.checkOutDate)}. Do not share it.</p></div>
+      <button class="go" onclick="go('offers')">See recommendations</button>`;
+  },
+
+  offers: () => `${backTo('dashboard', 'Dashboard')}<h2>Recommendations</h2>${S.offers.map(o => `<div class="card">${o}</div>`).join('')}
+    <button class="go" onclick="go('rewards')">See my loyalty rewards</button>`,
+
+  rewards: () => `${backTo('dashboard', 'Dashboard')}<h2>Loyalty</h2><div class="card"><p class="muted" style="margin:0">${S.user?.loyaltyTier || 'Standard'} member</p>
+    <p class="big" style="margin:0">${(S.user?.loyaltyPoints || 0).toLocaleString()} points</p>
+    <p class="muted" style="margin:.4rem 0 0">Earn 1 point for every ₦1,000 you spend. Tiers: Standard, Silver, Gold, Platinum.</p></div>`,
+
+  requests: () => `${backTo('dashboard', 'Dashboard')}<h2>Service requests</h2><div class="card"><label for="ty">What do you need?</label>
+    <select id="ty"><option>Housekeeping</option><option>Room service</option><option>Maintenance</option><option>Other</option></select>
+    <label for="nt">Details</label><textarea id="nt" rows="3" placeholder="e.g. Two extra towels, please"></textarea>${msg()}
+    <button class="go" onclick="doRequest()">Send request</button></div>
+    ${S.requests.length ? S.requests.map(r => `<div class="card"><b>${r.type}</b> <span class="chip">${reqLabel(r.status)}</span><p class="muted" style="margin:.3rem 0 0">${r.note || 'No details added'}</p></div>`).join('')
+      : '<p class="muted">No requests yet. Send one above and track it here.</p>'}`
+};
+
+/* ============ 7. ACTIONS ============
+   Always read what the guest typed BEFORE calling run(), because run() redraws the screen. */
+async function run(fn) {
+  S.busy = true; S.error = ''; draw();
+  try { await fn(); } catch (e) { S.error = e.message; }
+  S.busy = false; draw();
+}
+async function loadHotels() {
+  S.hotels = await api.hotels();
+  if (S.hotels[0] && !S.hotel) S.hotel = S.hotels[0]._id;
+  if (S.hotel) { S.rooms = await api.rooms(S.hotel); S.pick = S.pick || S.rooms[0]?._id; }
+  S.loaded = true; S.hotelsError = '';
+}
+function doAuth() {
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  const up = S.mode === 'up';
+  const f = { firstName: v('fn'), lastName: v('ln'), phone: v('ph'), email: v('em'), password: document.getElementById('pw').value };
+  run(async () => {
+    if (!f.email || !f.password) throw new Error('Enter your email and password.');
+    let d;
+    if (up) {
+      if (!f.firstName || !f.lastName) throw new Error('Enter your first and last name.');
+      d = await api.register(f);
+      if (!d.token) d = await api.login(f.email, f.password);
+    } else d = await api.login(f.email, f.password);
+    S.token = d.token; S.user = d.guest || d.user || {};
+    store.set({ token: S.token, user: S.user });
+    await afterSignIn();
+  });
+}
+async function afterSignIn() {
+  S.bookings = await api.myBookings().catch(() => []);
+  S.offers = await fake.offers();
+  S.info = ''; const n = S.next; S.next = '';
+  if (n === 'paymentDone') { S.view = 'dashboard'; setTimeout(verifyReturn, 0); } else S.view = n || 'dashboard';
+}
+function signOut() { store.set(null); Object.assign(S, { token: null, user: null, bookings: [], pending: null, checkedIn: {}, idDone: {}, view: 'home' }); draw(); }
+const changeHotel = id => run(async () => { S.hotel = id; S.rooms = await api.rooms(id); S.pick = S.rooms[0]?._id; });
+function toVerify() {
+  if (nights() < 1) { S.error = 'Check-out must be after check-in.'; return draw(); }
+  if (!S.token) { S.next = 'bookingDetails'; S.mode = 'up'; S.error = ''; S.info = 'Create an account or sign in to continue your booking.'; S.view = 'login'; return draw(); }
+  run(async () => {
+    S.pending = await api.createBooking({ hotel: S.hotel, room: S.pick, checkInDate: S.from, checkOutDate: S.to, numberOfGuests: S.guests });
+    S.view = 'idVerify';
+  });
+}
+/* ID check is a fake for now. In the Figma flow it happens before payment; Backend planned it at check-in. */
+function doIdVerify() {
+  const file = document.getElementById('idf')?.files[0];
+  run(async () => {
+    if (!file) throw new Error("We couldn't read your ID. Add a clear photo and try again.");
+    await fake.checkIn(file);
+    S.idDone[S.pending._id] = true; S.view = 'pay';
+  });
+}
+async function startPayment(fail) {
+  if (testMode()) { await wait(900); if (fail) throw new Error("Payment didn't go through. You were not charged. Try again or use another card."); return 'test'; }
+  const d = await call(PAYMENT.initPath, { method: 'POST', body: { booking: S.pending._id } });   // adjust when Backend confirms
+  const url = d.authorization_url || d.data?.authorization_url || d.authorizationUrl;
+  if (!url) throw new Error('Could not start the payment. Please try again.');
+  location.href = url;   // guest pays on Paystack, then returns to /payment-complete
+}
+function doPay() {
+  const fail = !!document.getElementById('fail')?.checked;
+  run(async () => {
+    if (await startPayment(fail) === 'test') {
+      S.bookings = await api.myBookings().catch(() => S.bookings);
+      S.confirmed = S.bookings.find(b => b._id === S.pending._id) || S.pending;
+      S.ok = 'Test mode: payment was simulated. On the server the booking stays Pending until real payment is connected.';
+      S.view = 'confirmed';
+    }
+  });
+}
+/* Guest comes back from Paystack to /payment-complete?reference=... We never mark anything as paid ourselves. */
+function verifyReturn() {
+  const p = new URLSearchParams(location.search), ref = p.get('reference') || p.get('trxref');
+  S.view = 'paymentDone';
+  run(async () => {
+    if (!PAYMENT.verifyPath) throw new Error('Payment confirmation is not connected yet. Your booking stays Pending until Backend confirms it.');
+    if (!ref) throw new Error('We could not find your payment reference.');
+    await call(PAYMENT.verifyPath + '?reference=' + encodeURIComponent(ref));   // adjust when Backend confirms
+    S.bookings = await api.myBookings();
+    S.confirmed = S.bookings.find(b => b.bookingStatus === 'Confirmed') || S.bookings[0];
+    S.ok = 'Payment confirmed. Your booking is confirmed.'; S.view = 'confirmed';
+  });
+}
+function doCheckIn(id) {
+  const file = document.getElementById('idf')?.files[0], needId = !S.idDone[id];
+  run(async () => {
+    if (needId && !file) throw new Error('Add a photo of your ID first.');
+    await fake.checkIn(needId ? file : true);
+    S.idDone[id] = true; S.checkedIn[id] = await fake.accessCode();
+  });
+}
+async function doRequest() {
+  const type = document.getElementById('ty').value, note = document.getElementById('nt').value;
+  const r = await fake.addRequest(type, note);
+  S.requests.unshift(r); S.ok = 'Request sent.'; draw();
+  setTimeout(() => { r.status = 'In Progress'; if (S.view === 'requests') draw(); }, 5000);
+}
+
+/* ============ 8. DRAWING AND START ============ */
+const groups = { home: ['home'], rooms: ['rooms', 'roomDetail', 'bookingDetails', 'idVerify', 'pay', 'paymentDone', 'confirmed'],
+                 dashboard: ['dashboard', 'bookings', 'checkin', 'key', 'requests', 'offers', 'rewards'] };
+function draw() {
+  const on = k => groups[k].includes(S.view) ? 'on' : '';
+  document.getElementById('nav').innerHTML = `<button class="${on('home')}" onclick="go('home')">Home</button><button class="${on('rooms')}" onclick="go('rooms')">Rooms</button>
+    <button class="${on('dashboard')}" onclick="go('dashboard')">Dashboard</button>` +
+    (S.token ? `<button onclick="signOut()">Sign out</button>` : `<button class="${S.view === 'login' ? 'on' : ''}" onclick="S.mode='in';go('login')">Sign in</button>`);
+  document.getElementById('app').innerHTML = screens[S.view]();
+}
+(async function start() {
+  const saved = store.get();
+  const p = new URLSearchParams(location.search);
+  const back = /payment-complete/.test(location.pathname + location.hash) || p.has('reference') || p.has('trxref');
+  const d = x => new Date(Date.now() + x * 864e5).toISOString().slice(0, 10);
+  S.from = d(7); S.to = d(9);
+  if (saved?.token) {
+    S.token = saved.token; S.user = saved.user;
+    try { S.bookings = await api.myBookings(); S.offers = await fake.offers(); } catch { signOut(); }
+  } else if (back) { S.next = 'paymentDone'; S.mode = 'in'; S.info = 'Sign in to see your payment result.'; S.view = 'login'; }
+  if (S.token && back) verifyReturn(); else draw();
+  loadHotels().then(draw).catch(e => { S.hotelsError = e.message; S.loaded = true; draw(); });
+})();
+</script>
+</body>
+</html>
