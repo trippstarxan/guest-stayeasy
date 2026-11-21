@@ -142,10 +142,8 @@ const API = 'https://hotel-booking-eagg.onrender.com';
 /* Paystack links from Backend: POST /api/payment/initialize {bookingId} returns data.authorizationUrl;
    POST /api/payment/verify {reference}. Set TEST_MODE to true to practise without paying. */
 const TEST_MODE = false;   // set true to practise without Paystack (nothing is charged)
-/* ID upload from Backend: POST /api/bookings/:bookingId/id-verification (photo sent as a file upload).
-   Backend has not said which field name they read the photo from. We send 'idDocument'.
-   If Backend's reply says the file is missing, change 'field' to the name they use. */
-const ID = { uploadPath: '/api/bookings/:bookingId/id-verification', photoField: 'photo' };   // tried in turn if Backend says 'Unexpected file field'
+/* ID upload: send idType and photo as multipart/form-data. */
+const ID = { uploadPath: '/api/bookings/:bookingId/id-verification', photoField: 'photo' };
 const PAYMENT = { initPath: '/api/payment/initialize', verifyPath: '/api/payment/verify' };   // received from Backend
 
 /* ============ 2. APP MEMORY ============ */
