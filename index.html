@@ -314,7 +314,7 @@ function doPay() {
     }
   });
 }
-/* Guest comes back from Paystack to /payment-complete?reference=... We never mark anything as paid ourselves. */
+/* Guest comes back from Paystack to /payment/callback?reference=... (or /payment-complete) We never mark anything as paid ourselves. */
 function verifyReturn() {
   const p = new URLSearchParams(location.search), ref = p.get('reference') || p.get('trxref');
   S.view = 'paymentDone';
@@ -355,7 +355,7 @@ function draw() {
 (async function start() {
   const saved = store.get();
   const p = new URLSearchParams(location.search);
-  const back = /payment-complete/.test(location.pathname + location.hash) || p.has('reference') || p.has('trxref');
+  const back = /payment-complete|payment\/callback/.test(location.pathname + location.hash) || p.has('reference') || p.has('trxref');
   const d = x => new Date(Date.now() + x * 864e5).toISOString().slice(0, 10);
   S.from = d(7); S.to = d(9);
   if (saved?.token) {
