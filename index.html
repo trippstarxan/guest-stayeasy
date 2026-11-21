@@ -49,10 +49,10 @@ button.alt{background:none;color:var(--ink);border:1px solid var(--field)}
 <script>
 /* ============ 1. SETTINGS ============ */
 const API = 'https://hotel-booking-eagg.onrender.com';
-/* Paystack links: Backend is still finalising these. When they send them, fill in the two paths
-   (for example '/api/payments/initialize') and adjust the reply names in startPayment() and verifyReturn().
-   While they are null the app runs payment in TEST MODE (nothing is really paid). */
-const PAYMENT = { initPath: null, verifyPath: null };
+/* Paystack links from Backend: POST /api/payment/initialize {bookingId} returns data.authorizationUrl;
+   POST /api/payment/verify {reference}. Set TEST_MODE to true to practise without paying. */
+const TEST_MODE = false;   // set true to practise without Paystack (nothing is charged)
+const PAYMENT = { initPath: '/api/payment/initialize', verifyPath: '/api/payment/verify' };   // received from Backend
 
 /* ============ 2. APP MEMORY ============ */
 const S = { token: null, user: null, view: 'home', mode: 'in', hotels: [], hotel: '', rooms: [], pick: '',
@@ -112,9 +112,10 @@ const estimate = () => nights() * (room()?.pricePerNight || 0);
 const reqLabel = s => ({ Pending: 'Received', 'In Progress': 'In progress', Completed: 'Done', Cancelled: 'Cancelled' }[s] || s);
 const roomNo = b => b.room?.roomNumber || 'to be assigned';
 const hotelName = b => b.hotel?.name || 'Hotel';
-const testMode = () => !PAYMENT.initPath;
+const testMode = () => TEST_MODE || !PAYMENT.initPath;
 /* Only a Confirmed booking can check in. In test mode a Pending one is allowed so you can try the screens. */
-const idOk = b => !!S.idDone[b._id];
+const idOk = b => !!S.idDone[b._id] || b.idVerificationStatus === 'Verified';
+const idChip = b => b.idVerificationStatus ? `<span class="chip">${({ Pending: 'ID pending', Verified: 'ID verified', NeedsReview: 'ID under review', Rejected: 'ID rejected' }[b.idVerificationStatus] || b.idVerificationStatus)}</span>` : '';
 const eligible = b => b.bookingStatus === 'Confirmed' || (testMode() && b.bookingStatus === 'Pending');
 const msg = () => (S.info ? `<div class="msg info">${S.info}</div>` : '') + (S.error ? `<div class="msg bad" role="alert">${S.error}</div>` : '') + (S.ok ? `<div class="msg ok">${S.ok}</div>` : '');
 const authed = ['dashboard','bookings','checkin','key','requests','offers','rewards','idVerify','pay','paymentDone','confirmed'];
@@ -177,6 +178,7 @@ const screens = {
   pay: () => !S.pending ? empty('Choose a room first.', 'See rooms', 'rooms') : `<h2>Payment</h2><div class="card">
     <p style="margin-top:0">${hotelName(S.pending)}${S.pending.room?.roomType ? ' · ' + S.pending.room.roomType : ''}</p>
     <p class="big">${naira(S.pending.totalAmount ?? estimate())}</p>
+    ${S.pending.expiresAt ? `<p class="muted">Complete payment before ${new Date(S.pending.expiresAt).toLocaleString('en-NG')}.</p>` : ''}
     ${testMode() ? `<div class="msg info">Test mode: the real Paystack payment is not connected yet, so nothing is charged.</div>
       <label><input type="checkbox" id="fail"> Test a failed payment</label>` : '<p class="muted">You will be taken to Paystack to pay securely.</p>'}
     ${msg()}<button class="go" onclick="doPay()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Processing…' : S.error ? 'Try payment again' : 'Pay now'}</button></div>`,
@@ -200,7 +202,7 @@ const screens = {
     <button class="go" onclick="go('rooms')">Book another stay</button>`,
 
   bookings: () => `${backTo('dashboard', 'Dashboard')}<h2>My bookings</h2>${msg()}${S.bookings.length ? S.bookings.map(b => `<div class="card">
-    <b>${hotelName(b)}</b> <span class="chip">${b.bookingStatus}</span>
+    <b>${hotelName(b)}</b> <span class="chip">${b.bookingStatus}</span> ${idChip(b)}
     <p class="muted" style="margin:.3rem 0 0">${b.room?.roomType || 'Room'} · ${day(b.checkInDate)} to ${day(b.checkOutDate)} · ${naira(b.totalAmount)}</p></div>`).join('')
     : empty('You have no bookings yet.', 'Book a room', 'rooms')}`,
 
@@ -296,8 +298,8 @@ function doIdVerify() {
 }
 async function startPayment(fail) {
   if (testMode()) { await wait(900); if (fail) throw new Error("Payment didn't go through. You were not charged. Try again or use another card."); return 'test'; }
-  const d = await call(PAYMENT.initPath, { method: 'POST', body: { booking: S.pending._id } });   // adjust when Backend confirms
-  const url = d.authorization_url || d.data?.authorization_url || d.authorizationUrl;
+  const d = await call(PAYMENT.initPath, { method: 'POST', body: { bookingId: S.pending._id } });
+  const url = d.data?.authorizationUrl;
   if (!url) throw new Error('Could not start the payment. Please try again.');
   location.href = url;   // guest pays on Paystack, then returns to /payment-complete
 }
@@ -319,7 +321,7 @@ function verifyReturn() {
   run(async () => {
     if (!PAYMENT.verifyPath) throw new Error('Payment confirmation is not connected yet. Your booking stays Pending until Backend confirms it.');
     if (!ref) throw new Error('We could not find your payment reference.');
-    await call(PAYMENT.verifyPath + '?reference=' + encodeURIComponent(ref));   // adjust when Backend confirms
+    await call(PAYMENT.verifyPath, { method: 'POST', body: { reference: ref } });
     S.bookings = await api.myBookings();
     S.confirmed = S.bookings.find(b => b.bookingStatus === 'Confirmed') || S.bookings[0];
     S.ok = 'Payment confirmed. Your booking is confirmed.'; S.view = 'confirmed';
