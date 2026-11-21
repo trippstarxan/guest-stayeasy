@@ -314,7 +314,7 @@ const screens = {
   idVerify: () => !S.pending ? empty('Choose a room first.', 'See rooms', 'rooms') : `<h2>Verify your identity</h2><div class="card">
     <p style="margin-top:0">Add a photo of your passport, driver's licence or national ID. We use it to confirm it's you.</p>
     ${idChip(S.pending)}
-    ${ID.uploadPath ? '' : '<div class="msg info">ID verification is not connected to Backend yet. Payment stays blocked until it is.</div>'}
+    <label for="idType">ID type</label><select id="idType"><option value="nationalId">National ID</option><option value="passport">International passport</option><option value="driversLicense">Driver's licence</option></select>
     <label for="idf">ID photo</label><input id="idf" type="file" accept="image/*">${msg()}
     <button class="go" onclick="doIdVerify()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking your ID…' : 'Verify my ID'}</button></div>`,
 
@@ -357,11 +357,13 @@ const screens = {
   },
 
   key: () => {
-    const b = S.bookings.find(x => S.checkedIn[x._id]);
-    if (!b) return backTo('dashboard', 'Dashboard') + empty('Check in first. Your room code appears here afterwards.', 'Go to check-in', 'checkin');
+    const b = S.bookings.find(x => S.roomCodes[x._id] || S.checkedIn[x._id]);
+    if (!b) return backTo('dashboard', 'Dashboard') + empty('Your room access code will appear here when the hotel makes it available.', 'Go to check-in', 'checkin');
+    const access = S.roomCodes[b._id] || S.checkedIn[b._id] || {};
+    const code = access.code || access.roomCode || access.data?.code || access.data?.roomCode;
     return `${backTo('dashboard', 'Dashboard')}<h2>Digital room access</h2><div class="card key"><p style="margin:0">Room ${roomNo(b)}</p>
-      <p class="code" aria-label="Room code ${S.checkedIn[b._id].code}">${[...String(S.checkedIn[b._id].code)].map((d, i) => `<i style="--i:${i}">${d}</i>`).join('')}</p>
-      <p style="margin:0">Enter this code on the door keypad.<br>Works ${day(b.checkInDate)} to ${day(b.checkOutDate)}. Do not share it.</p></div>
+      ${code ? `<p class="code" aria-label="Room access code">${[...String(code)].map((d, i) => `<i style="--i:${i}">${esc(d)}</i>`).join('')}</p>` : '<p class="muted">The hotel has not issued a room code yet.</p>'}
+      <p style="margin:0">Keep your access code private. Contact the hotel if you need assistance.</p></div>
       <button class="go" onclick="go('offers')">See recommendations</button>`;
   },
 
@@ -369,8 +371,8 @@ const screens = {
     <button class="go" onclick="go('rewards')">See my loyalty rewards</button>`,
 
   rewards: () => `${backTo('dashboard', 'Dashboard')}<h2>Loyalty</h2><div class="card"><p class="muted" style="margin:0">${esc(S.user?.loyaltyTier || 'Standard')} member</p>
-    <p class="big" style="margin:0">${(S.user?.loyaltyPoints || 0).toLocaleString()} points</p>
-    <p class="muted" style="margin:.4rem 0 0">Earn 1 point for every ₦1,000 you spend. Tiers: Standard, Silver, Gold, Platinum.</p></div>`,
+    <p class="big" style="margin:0">${Number(S.points || 0).toLocaleString()} points</p>
+    <p class="muted" style="margin:.4rem 0 0">Your current loyalty points balance.</p></div>`,
 
   requests: () => `${backTo('dashboard', 'Dashboard')}<h2>Service requests</h2><div class="card"><label for="ty">What do you need?</label>
     <select id="ty"><option>Housekeeping</option><option>Room service</option><option>Maintenance</option><option>Other</option></select>
@@ -482,18 +484,46 @@ function verifyReturn() {
   });
 }
 function doCheckIn(id) {
-  const file = document.getElementById('idf')?.files[0], needId = !S.idDone[id];
+  const file = document.getElementById('idf')?.files[0], idType = document.getElementById('idType')?.value;
+  const booking = S.bookings.find(b => b._id === id) || {};
+  const needId = !S.idDone[id] && !idOk(booking);
   run(async () => {
-    if (needId && !file) throw new Error('Add a photo of your ID first.');
-    await fake.checkIn(needId ? file : true);
-    S.idDone[id] = true; S.checkedIn[id] = await fake.accessCode();
+    if (needId && !file) throw new Error('Choose a clear photo of your ID first.');
+    if (needId && !idType) throw new Error('Choose your ID type.');
+    if (needId) {
+      const result = await api.verifyId(id, idType, file);
+      const status = result.idVerificationStatus || result.data?.idVerificationStatus || result.booking?.idVerificationStatus;
+      if (status === 'Rejected') throw new Error('Your ID was rejected. Please upload a clearer photo.');
+      if (status === 'Pending' || status === 'NeedsReview') throw new Error('Your ID was received and is awaiting verification. Room access will be available when verification is complete.');
+      S.idDone[id] = true;
+    }
+    const response = await api.roomCode(id);
+    const access = response.data || response;
+    S.roomCodes[id] = access; S.checkedIn[id] = access;
+    S.ok = 'Your room access details have been retrieved.'; S.view = 'key';
   });
 }
 async function doRequest() {
-  const type = document.getElementById('ty').value, note = document.getElementById('nt').value;
-  const r = await fake.addRequest(type, note);
-  S.requests.unshift(r); S.ok = 'Request sent.'; draw();
-  setTimeout(() => { r.status = 'In Progress'; if (S.view === 'requests') draw(); }, 5000);
+  const type = document.getElementById('ty')?.value;
+  const note = (document.getElementById('nt')?.value || '').trim();
+  run(async () => {
+    if (!type) throw new Error('Choose the type of service you need.');
+    const response = await api.addRequest(type, note);
+    const created = response.request || response.data || response;
+    S.requests.unshift(created); S.ok = 'Your service request has been submitted.'; draw();
+  });
+}
+async function loadGuestData() {
+  if (!S.token) return;
+  const [pointsResult, requestsResult] = await Promise.allSettled([api.guestPoints(), api.myRequests()]);
+  if (pointsResult.status === 'fulfilled') {
+    const p = pointsResult.value;
+    S.points = Number(p.points ?? p.data?.points ?? p.loyaltyPoints ?? p.data?.loyaltyPoints ?? S.user?.loyaltyPoints ?? 0);
+  }
+  if (requestsResult.status === 'fulfilled') {
+    const r = requestsResult.value;
+    S.requests = Array.isArray(r) ? r : (r.requests || r.data?.requests || r.data || []);
+  }
 }
 
 /* ============ 8. DRAWING AND START ============ */
@@ -524,7 +554,7 @@ window.addEventListener('scroll', () => document.getElementById('hd').classList.
   if (!known) S.view = 'notfound';
   if (saved?.token) {
     S.token = saved.token; S.user = saved.user;
-    try { S.bookings = await api.myBookings(); S.offers = await fake.offers(); } catch { signOut(); }
+    try { S.bookings = await api.myBookings(); await loadGuestData(); } catch { signOut(); }
   } else if (back) { S.next = 'paymentDone'; S.mode = 'in'; S.info = 'Sign in to see your payment result.'; S.view = 'login'; }
   if (S.token && back) verifyReturn(); else draw();
   loadHotels().then(draw).catch(e => { S.hotelsError = e.message; S.loaded = true; draw(); });
