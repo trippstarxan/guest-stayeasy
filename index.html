@@ -196,7 +196,10 @@ const api = {
     return call('/api/bookings/' + encodeURIComponent(bookingId) + '/id-verification', { method: 'POST', body: formData });
   },
   roomCode: async bookingId => call('/api/bookings/' + encodeURIComponent(bookingId) + '/room-code'),
-  createBooking: async b => { const d = await call('/api/bookings', { method: 'POST', body: b }); return d.booking || d.data || d; } // proposed by Backend
+  createBooking: async b => {
+    const d = await call('/api/bookings', { method: 'POST', body: b });
+    return d.booking || d.data?.booking || d.data || d;
+  }
 };
 
 /* Guest services use live Backend endpoints. */
@@ -399,19 +402,28 @@ async function loadHotels() {
   if (S.hotel) { S.rooms = await api.rooms(S.hotel); S.pick = S.pick || S.rooms[0]?._id; }
   S.loaded = true; S.hotelsError = '';
 }
+function authToken(d) {
+  return d?.token || d?.accessToken || d?.data?.token || d?.data?.accessToken || d?.guest?.token || d?.user?.token || '';
+}
+function authUser(d) {
+  return d?.guest || d?.user || d?.data?.guest || d?.data?.user || d?.data?.profile || {};
+}
 function doAuth() {
+  // Capture the form values before run() redraws the screen.
   const v = id => (document.getElementById(id)?.value || '').trim();
+  const password = document.getElementById('pw')?.value || '';
   const up = S.mode === 'up';
-  const f = { firstName: v('fn'), lastName: v('ln'), phone: v('ph'), email: v('em'), password: document.getElementById('pw').value };
+  const f = { firstName: v('fn'), lastName: v('ln'), phone: v('ph'), email: v('em'), password };
   run(async () => {
     if (!f.email || !f.password) throw new Error('Enter your email and password.');
-    let d;
-    if (up) {
-      if (!f.firstName || !f.lastName) throw new Error('Enter your first and last name.');
-      d = await api.register(f);
-      if (!d.token) d = await api.login(f.email, f.password);
-    } else d = await api.login(f.email, f.password);
-    S.token = d.token; S.user = d.guest || d.user || {};
+    if (up && (!f.firstName || !f.lastName)) throw new Error('Enter your first and last name.');
+    let d = up ? await api.register(f) : await api.login(f.email, f.password);
+    // Some API responses wrap token/profile in data; support both response shapes.
+    if (!authToken(d) && up) d = await api.login(f.email, f.password);
+    const token = authToken(d);
+    if (!token) throw new Error(d?.message || d?.data?.message || 'The server did not return an access token. Please check the authentication API response.');
+    S.token = token;
+    S.user = authUser(d);
     store.set({ token: S.token, user: S.user });
     await afterSignIn();
   });
@@ -429,10 +441,22 @@ function sessionEnded() {
 function signOut() { store.set(null); Object.assign(S, { token: null, user: null, bookings: [], pending: null, checkedIn: {}, idDone: {}, view: 'home' }); draw(); }
 const changeHotel = id => run(async () => { S.hotel = id; S.rooms = await api.rooms(id); S.pick = S.rooms[0]?._id; });
 function toVerify() {
-  if (nights() < 1) { S.error = 'Check-out must be after check-in.'; return draw(); }
-  if (!S.token) { S.next = 'bookingDetails'; S.mode = 'up'; S.error = ''; S.info = 'Create an account or sign in to continue your booking.'; S.view = 'login'; return draw(); }
+  S.error = ''; S.ok = '';
+  if (!S.hotel) { S.error = 'Choose a hotel before continuing.'; return draw(); }
+  if (!S.pick || !room()) { S.error = 'Choose an available room before continuing.'; return draw(); }
+  if (!S.from || !S.to || nights() < 1) { S.error = 'Choose valid check-in and check-out dates. Check-out must be after check-in.'; return draw(); }
+  if (!S.token) {
+    S.next = 'bookingDetails'; S.mode = 'up';
+    S.info = 'Create an account or sign in to continue your booking.';
+    S.view = 'login'; return draw();
+  }
   run(async () => {
-    S.pending = await api.createBooking({ hotel: S.hotel, room: S.pick, checkInDate: S.from, checkOutDate: S.to, numberOfGuests: S.guests });
+    const booking = await api.createBooking({
+      hotel: S.hotel, room: S.pick, checkInDate: S.from,
+      checkOutDate: S.to, numberOfGuests: Number(S.guests) || 1
+    });
+    if (!booking?._id && !booking?.id) throw new Error(booking?.message || 'The booking was not created. The server response did not include a booking ID.');
+    S.pending = { ...booking, _id: booking._id || booking.id };
     S.view = 'idVerify';
   });
 }
