@@ -225,6 +225,12 @@ const go = v => {
   S.error = ''; S.ok = ''; S.info = ''; S.busy = false;
   if (authed.includes(v) && !S.token) { S.next = v; S.mode = 'in'; S.info = 'Sign in or create an account to continue.'; v = 'login'; }
   S.view = v; draw(); window.scrollTo(0, 0);
+  if (S.token && v === 'key') {
+    const b = S.bookings.find(x => S.roomCodes[x._id] || S.checkedIn[x._id]) || S.bookings.find(eligible);
+    if (b && !S.roomCodes[b._id]) api.roomCode(b._id).then(r => { S.roomCodes[b._id] = r.data || r; if (S.view === 'key') draw(); }).catch(e => { S.error = e.message; if (S.view === 'key') draw(); });
+  }
+  if (S.token && v === 'rewards') api.guestPoints().then(p => { S.points = Number(p.points ?? p.data?.points ?? p.loyaltyPoints ?? p.data?.loyaltyPoints ?? 0); if (S.view === 'rewards') draw(); }).catch(e => { S.error = e.message; if (S.view === 'rewards') draw(); });
+  if (S.token && v === 'requests') api.myRequests().then(r => { S.requests = Array.isArray(r) ? r : (r.requests || r.data?.requests || r.data || []); if (S.view === 'requests') draw(); }).catch(e => { S.error = e.message; if (S.view === 'requests') draw(); });
 };
 const backTo = (to, label) => `<button class="link back" onclick="go('${to}')">← ${label}</button>`;
 const empty = (text, btn, to) => `<div class="card"><p>${text}</p><button class="go" onclick="go('${to}')">${btn}</button></div>`;
