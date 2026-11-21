@@ -161,11 +161,20 @@ async function call(path, { method = 'GET', body } = {}, attempt = 0) {
   const wake = document.getElementById('wake');
   const timer = setTimeout(() => { wake.hidden = false; }, 4000);   // free servers can sleep
   try {
-    const res = await fetch(API + path, {
-      method,
-      headers: { ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
-      body: body ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined
-    });
+    const controller = new AbortController();
+    const requestTimeout = setTimeout(() => controller.abort(), 25000);
+    let res;
+    try {
+      res = await fetch(API + path, {
+        method,
+        headers: { ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
+        body: body ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined,
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') throw new Error('The server did not respond within 25 seconds. Please try again; your account may already have been created.');
+      throw error;
+    } finally { clearTimeout(requestTimeout); }
     let data = {}; try { data = await res.json(); } catch {}
     if ([502, 503, 504].includes(res.status)) {
       if (method === 'GET' && attempt < 3) { await wait(4000); return call(path, { method, body }, attempt + 1); }
@@ -400,27 +409,53 @@ async function loadHotels() {
   S.loaded = true; S.hotelsError = '';
 }
 function doAuth() {
+  // Capture form values before run() redraws the screen.
   const v = id => (document.getElementById(id)?.value || '').trim();
   const up = S.mode === 'up';
-  const f = { firstName: v('fn'), lastName: v('ln'), phone: v('ph'), email: v('em'), password: document.getElementById('pw').value };
+  const password = document.getElementById('pw')?.value || '';
+  const f = { firstName: v('fn'), lastName: v('ln'), phone: v('ph'), email: v('em'), password };
   run(async () => {
     if (!f.email || !f.password) throw new Error('Enter your email and password.');
-    let d;
+    if (up && (!f.firstName || !f.lastName)) throw new Error('Enter your first and last name.');
+    if (up && f.password.length < 6) throw new Error('Use a password with at least 6 characters.');
+    let response;
     if (up) {
-      if (!f.firstName || !f.lastName) throw new Error('Enter your first and last name.');
-      d = await api.register(f);
-      if (!d.token) d = await api.login(f.email, f.password);
-    } else d = await api.login(f.email, f.password);
-    S.token = d.token; S.user = d.guest || d.user || {};
+      response = await api.register(f);
+    } else {
+      response = await api.login(f.email, f.password);
+    }
+    // Support both {token, user} and {data:{token, guest}} API response formats.
+    let payload = response?.data && typeof response.data === 'object' ? response.data : response;
+    let token = payload?.token || payload?.accessToken || response?.token || response?.accessToken;
+    // Some registration handlers create the account but do not return a token.
+    if (up && !token) {
+      const loginResponse = await api.login(f.email, f.password);
+      payload = loginResponse?.data && typeof loginResponse.data === 'object' ? loginResponse.data : loginResponse;
+      token = payload?.token || payload?.accessToken || loginResponse?.token || loginResponse?.accessToken;
+    }
+    if (!token) throw new Error(response?.message || payload?.message || 'Your account may have been created, but the server did not return an access token. Try signing in with the email and password you just used.');
+    S.token = token;
+    S.user = payload?.guest || payload?.user || response?.guest || response?.user || {};
     store.set({ token: S.token, user: S.user });
     await afterSignIn();
   });
 }
 async function afterSignIn() {
-  S.bookings = await api.myBookings().catch(() => []);
-  S.offers = await fake.offers();
+  // Do not hold the successful sign-in/sign-up screen hostage while optional dashboard data loads.
   S.info = ''; const n = S.next; S.next = '';
-  if (n === 'paymentDone') { S.view = 'dashboard'; setTimeout(verifyReturn, 0); } else S.view = n || 'dashboard';
+  S.view = n || 'dashboard';
+  S.offers = await fake.offers();
+  draw();
+  api.myBookings().then(bookings => {
+    S.bookings = bookings;
+    if (S.view === 'dashboard' || S.view === 'bookings') draw();
+  }).catch(error => {
+    console.warn('Could not load bookings after sign-in:', error);
+  });
+  loadGuestData().then(() => {
+    if (['dashboard','rewards','requests'].includes(S.view)) draw();
+  }).catch(error => console.warn('Could not load guest data:', error));
+  if (n === 'paymentDone') setTimeout(verifyReturn, 0);
 }
 function sessionEnded() {
   store.set(null); S.token = null; S.user = null; S.pending = null; S.bookings = [];
