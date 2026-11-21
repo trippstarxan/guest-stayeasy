@@ -142,16 +142,13 @@ const API = 'https://hotel-booking-eagg.onrender.com';
 /* Paystack links from Backend: POST /api/payment/initialize {bookingId} returns data.authorizationUrl;
    POST /api/payment/verify {reference}. Set TEST_MODE to true to practise without paying. */
 const TEST_MODE = false;   // set true to practise without Paystack (nothing is charged)
-/* ID upload from Backend: POST /api/bookings/:bookingId/id-verification (photo sent as a file upload).
-   Backend has not said which field name they read the photo from. We send 'idDocument'.
-   If Backend's reply says the file is missing, change 'field' to the name they use. */
-const ID = { uploadPath: '/api/bookings/:bookingId/id-verification', field: 'idDocument',
-             alt: ['document', 'idImage', 'image', 'file', 'idPhoto', 'photo', 'idCard', 'idFile', 'id', 'idDoc'] };   // tried in turn if Backend says 'Unexpected file field'
+/* ID upload: send idType and photo as multipart/form-data. */
+const ID = { uploadPath: '/api/bookings/:bookingId/id-verification', photoField: 'photo' };
 const PAYMENT = { initPath: '/api/payment/initialize', verifyPath: '/api/payment/verify' };   // received from Backend
 
 /* ============ 2. APP MEMORY ============ */
 const S = { token: null, user: null, view: 'home', mode: 'in', hotels: [], hotel: '', rooms: [], pick: '',
-            from: '', to: '', guests: 1, pending: null, bookings: [], checkedIn: {}, requests: [], offers: [],
+            from: '', to: '', guests: 1, pending: null, bookings: [], checkedIn: {}, requests: [], offers: [], points: 0, roomCodes: {},
             error: '', ok: '', info: '', busy: false, next: '', idDone: {}, confirmed: null, loaded: false, hotelsError: '' };
 /* The sign-in is kept for this browser tab only, so the guest is still signed in when Paystack sends them back. */
 const store = {
@@ -189,23 +186,20 @@ const api = {
   hotels: async () => pick(await call('/api/hotels'), 'hotels'),
   rooms: async id => pick(await call('/api/rooms/hotel/' + id), 'rooms'),
   myBookings: async () => pick(await call('/api/bookings/my-bookings'), 'bookings'),
+  guestPoints: async () => call('/api/guests/points'),
+  myRequests: async () => call('/api/requests/my-requests'),
+  addRequest: async (type, note) => call('/api/requests', { method: 'POST', body: { type, note } }),
+  verifyId: async (bookingId, idType, selectedFile) => {
+    const formData = new FormData();
+    formData.append('idType', idType);
+    formData.append('photo', selectedFile);
+    return call('/api/bookings/' + encodeURIComponent(bookingId) + '/id-verification', { method: 'POST', body: formData });
+  },
+  roomCode: async bookingId => call('/api/bookings/' + encodeURIComponent(bookingId) + '/room-code'),
   createBooking: async b => { const d = await call('/api/bookings', { method: 'POST', body: b }); return d.booking || d.data || d; } // proposed by Backend
 };
 
-/* ============ 4. STILL FAKE (Backend has not finished these) ============
-   Replace each one when Backend sends the final link:
-   check-in and ID upload, access code, service requests, offers. */
-const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const sid = x => String(x ?? '').replace(/[^\w-]/g, '');   // ids are only used as letters, digits, - and _
-const safeUrl = u => /^https:\/\/[^\s'"()<>\\]+$/.test(String(u || '')) ? u : '';
-const wait = ms => new Promise(r => setTimeout(r, ms));
-const fake = {
-  async checkIn(file) { await wait(1200); if (!file) throw new Error('Add a photo of your ID first.'); },
-  async accessCode() { await wait(300); return { code: '4821' }; },
-  async addRequest(type, note) { await wait(400); return { id: Date.now(), type, note, status: 'Pending' }; },
-  async offers() { await wait(100); return ['20% off a spa session this week', 'Free breakfast on your next stay', 'Late checkout on Sunday']; }
-};
-
+/* Guest services use live Backend endpoints. */
 /* ============ 5. SMALL HELPERS ============ */
 const naira = n => '₦' + Number(n || 0).toLocaleString('en-NG');
 const day = x => x ? new Date(x).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
@@ -229,6 +223,12 @@ const go = v => {
   S.error = ''; S.ok = ''; S.info = ''; S.busy = false;
   if (authed.includes(v) && !S.token) { S.next = v; S.mode = 'in'; S.info = 'Sign in or create an account to continue.'; v = 'login'; }
   S.view = v; draw(); window.scrollTo(0, 0);
+  if (S.token && v === 'key') {
+    const b = S.bookings.find(x => S.roomCodes[x._id] || S.checkedIn[x._id]) || S.bookings.find(eligible);
+    if (b && !S.roomCodes[b._id]) api.roomCode(b._id).then(r => { S.roomCodes[b._id] = r.data || r; if (S.view === 'key') draw(); }).catch(e => { S.error = e.message; if (S.view === 'key') draw(); });
+  }
+  if (S.token && v === 'rewards') api.guestPoints().then(p => { S.points = Number(p.points ?? p.data?.points ?? p.loyaltyPoints ?? p.data?.loyaltyPoints ?? 0); if (S.view === 'rewards') draw(); }).catch(e => { S.error = e.message; if (S.view === 'rewards') draw(); });
+  if (S.token && v === 'requests') api.myRequests().then(r => { S.requests = Array.isArray(r) ? r : (r.requests || r.data?.requests || r.data || []); if (S.view === 'requests') draw(); }).catch(e => { S.error = e.message; if (S.view === 'requests') draw(); });
 };
 const backTo = (to, label) => `<button class="link back" onclick="go('${to}')">← ${label}</button>`;
 const empty = (text, btn, to) => `<div class="card"><p>${text}</p><button class="go" onclick="go('${to}')">${btn}</button></div>`;
@@ -318,7 +318,7 @@ const screens = {
   idVerify: () => !S.pending ? empty('Choose a room first.', 'See rooms', 'rooms') : `<h2>Verify your identity</h2><div class="card">
     <p style="margin-top:0">Add a photo of your passport, driver's licence or national ID. We use it to confirm it's you.</p>
     ${idChip(S.pending)}
-    ${ID.uploadPath ? '' : '<div class="msg info">ID verification is not connected to Backend yet. Payment stays blocked until it is.</div>'}
+    <label for="idType">ID type</label><select id="idType"><option value="nationalId">National ID</option><option value="passport">International passport</option><option value="driversLicense">Driver's licence</option></select>
     <label for="idf">ID photo</label><input id="idf" type="file" accept="image/*">${msg()}
     <button class="go" onclick="doIdVerify()" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking your ID…' : 'Verify my ID'}</button></div>`,
 
@@ -361,11 +361,13 @@ const screens = {
   },
 
   key: () => {
-    const b = S.bookings.find(x => S.checkedIn[x._id]);
-    if (!b) return backTo('dashboard', 'Dashboard') + empty('Check in first. Your room code appears here afterwards.', 'Go to check-in', 'checkin');
+    const b = S.bookings.find(x => S.roomCodes[x._id] || S.checkedIn[x._id]);
+    if (!b) return backTo('dashboard', 'Dashboard') + empty('Your room access code will appear here when the hotel makes it available.', 'Go to check-in', 'checkin');
+    const access = S.roomCodes[b._id] || S.checkedIn[b._id] || {};
+    const code = access.code || access.roomCode || access.data?.code || access.data?.roomCode;
     return `${backTo('dashboard', 'Dashboard')}<h2>Digital room access</h2><div class="card key"><p style="margin:0">Room ${roomNo(b)}</p>
-      <p class="code" aria-label="Room code ${S.checkedIn[b._id].code}">${[...String(S.checkedIn[b._id].code)].map((d, i) => `<i style="--i:${i}">${d}</i>`).join('')}</p>
-      <p style="margin:0">Enter this code on the door keypad.<br>Works ${day(b.checkInDate)} to ${day(b.checkOutDate)}. Do not share it.</p></div>
+      ${code ? `<p class="code" aria-label="Room access code">${[...String(code)].map((d, i) => `<i style="--i:${i}">${esc(d)}</i>`).join('')}</p>` : '<p class="muted">The hotel has not issued a room code yet.</p>'}
+      <p style="margin:0">Keep your access code private. Contact the hotel if you need assistance.</p></div>
       <button class="go" onclick="go('offers')">See recommendations</button>`;
   },
 
@@ -373,8 +375,8 @@ const screens = {
     <button class="go" onclick="go('rewards')">See my loyalty rewards</button>`,
 
   rewards: () => `${backTo('dashboard', 'Dashboard')}<h2>Loyalty</h2><div class="card"><p class="muted" style="margin:0">${esc(S.user?.loyaltyTier || 'Standard')} member</p>
-    <p class="big" style="margin:0">${(S.user?.loyaltyPoints || 0).toLocaleString()} points</p>
-    <p class="muted" style="margin:.4rem 0 0">Earn 1 point for every ₦1,000 you spend. Tiers: Standard, Silver, Gold, Platinum.</p></div>`,
+    <p class="big" style="margin:0">${Number(S.points || 0).toLocaleString()} points</p>
+    <p class="muted" style="margin:.4rem 0 0">Your current loyalty points balance.</p></div>`,
 
   requests: () => `${backTo('dashboard', 'Dashboard')}<h2>Service requests</h2><div class="card"><label for="ty">What do you need?</label>
     <select id="ty"><option>Housekeeping</option><option>Room service</option><option>Maintenance</option><option>Other</option></select>
@@ -437,24 +439,20 @@ function toVerify() {
 /* ID check is a fake for now. In the Figma flow it happens before payment; Backend planned it at check-in. */
 function doIdVerify() {
   const file = document.getElementById('idf')?.files[0];
+  const idType = document.getElementById('idType')?.value;
   run(async () => {
-    if (!file) throw new Error("We couldn't read your ID. Add a clear photo and try again.");
-    if (!ID.uploadPath) throw new Error('ID verification is not connected to Backend yet, so payment is blocked. Ask Backend for the ID upload link.');
-    const id = S.pending._id, url = ID.uploadPath.replace(':bookingId', encodeURIComponent(id));
-    let d, last = null;
-    for (const f of [ID.field, ...ID.alt.filter(x => x !== ID.field)]) {
-      const fd = new FormData(); fd.append(f, file);
-      try { d = await call(url, { method: 'POST', body: fd }); ID.field = f; last = null; console.info('ID photo field that Backend accepted:', f); break; }
-      catch (e) { last = e; if (!/unexpected.*field/i.test(e.message)) throw e; }
-    }
-    if (last) throw new Error('Backend did not accept the photo field name. Ask Backend which field name the ID upload expects.');
+    if (!file) throw new Error('Choose a clear photo of your ID before continuing.');
+    if (!idType) throw new Error('Choose the type of identification document.');
+    const bookingId = S.pending?._id;
+    if (!bookingId) throw new Error('We could not identify the booking for this ID verification.');
+    const d = await api.verifyId(bookingId, idType, file);
     const fromReply = [d.booking, d.data].find(x => x && typeof x === 'object' && x.idVerificationStatus);
     S.bookings = await api.myBookings().catch(() => S.bookings);
-    S.pending = { ...S.pending, ...(fromReply || {}), ...(S.bookings.find(x => x._id === id) || {}) };
-    const st = S.pending.idVerificationStatus;
-    if (st === 'Rejected') throw new Error('Your ID was rejected. Please upload a clearer photo.');
-    if (st === 'Pending' || st === 'NeedsReview') { S.ok = 'ID received. We are checking it. You can pay once it is verified.'; return; }
-    S.idDone[S.pending._id] = true; S.view = 'pay';
+    S.pending = { ...S.pending, ...(fromReply || {}), ...(S.bookings.find(x => x._id === bookingId) || {}) };
+    const status = S.pending.idVerificationStatus || d.idVerificationStatus || d.data?.idVerificationStatus;
+    if (status === 'Rejected') throw new Error('Your ID was rejected. Please upload a clearer photo.');
+    if (status === 'Pending' || status === 'NeedsReview') { S.ok = 'Your ID photo was received and is awaiting verification.'; return; }
+    S.idDone[bookingId] = true; S.view = 'pay';
   });
 }
 /* Payment start (below) */
@@ -490,18 +488,46 @@ function verifyReturn() {
   });
 }
 function doCheckIn(id) {
-  const file = document.getElementById('idf')?.files[0], needId = !S.idDone[id];
+  const file = document.getElementById('idf')?.files[0], idType = document.getElementById('idType')?.value;
+  const booking = S.bookings.find(b => b._id === id) || {};
+  const needId = !S.idDone[id] && !idOk(booking);
   run(async () => {
-    if (needId && !file) throw new Error('Add a photo of your ID first.');
-    await fake.checkIn(needId ? file : true);
-    S.idDone[id] = true; S.checkedIn[id] = await fake.accessCode();
+    if (needId && !file) throw new Error('Choose a clear photo of your ID first.');
+    if (needId && !idType) throw new Error('Choose your ID type.');
+    if (needId) {
+      const result = await api.verifyId(id, idType, file);
+      const status = result.idVerificationStatus || result.data?.idVerificationStatus || result.booking?.idVerificationStatus;
+      if (status === 'Rejected') throw new Error('Your ID was rejected. Please upload a clearer photo.');
+      if (status === 'Pending' || status === 'NeedsReview') throw new Error('Your ID was received and is awaiting verification. Room access will be available when verification is complete.');
+      S.idDone[id] = true;
+    }
+    const response = await api.roomCode(id);
+    const access = response.data || response;
+    S.roomCodes[id] = access; S.checkedIn[id] = access;
+    S.ok = 'Your room access details have been retrieved.'; S.view = 'key';
   });
 }
 async function doRequest() {
-  const type = document.getElementById('ty').value, note = document.getElementById('nt').value;
-  const r = await fake.addRequest(type, note);
-  S.requests.unshift(r); S.ok = 'Request sent.'; draw();
-  setTimeout(() => { r.status = 'In Progress'; if (S.view === 'requests') draw(); }, 5000);
+  const type = document.getElementById('ty')?.value;
+  const note = (document.getElementById('nt')?.value || '').trim();
+  run(async () => {
+    if (!type) throw new Error('Choose the type of service you need.');
+    const response = await api.addRequest(type, note);
+    const created = response.request || response.data || response;
+    S.requests.unshift(created); S.ok = 'Your service request has been submitted.'; draw();
+  });
+}
+async function loadGuestData() {
+  if (!S.token) return;
+  const [pointsResult, requestsResult] = await Promise.allSettled([api.guestPoints(), api.myRequests()]);
+  if (pointsResult.status === 'fulfilled') {
+    const p = pointsResult.value;
+    S.points = Number(p.points ?? p.data?.points ?? p.loyaltyPoints ?? p.data?.loyaltyPoints ?? S.user?.loyaltyPoints ?? 0);
+  }
+  if (requestsResult.status === 'fulfilled') {
+    const r = requestsResult.value;
+    S.requests = Array.isArray(r) ? r : (r.requests || r.data?.requests || r.data || []);
+  }
 }
 
 /* ============ 8. DRAWING AND START ============ */
@@ -532,7 +558,7 @@ window.addEventListener('scroll', () => document.getElementById('hd').classList.
   if (!known) S.view = 'notfound';
   if (saved?.token) {
     S.token = saved.token; S.user = saved.user;
-    try { S.bookings = await api.myBookings(); S.offers = await fake.offers(); } catch { signOut(); }
+    try { S.bookings = await api.myBookings(); await loadGuestData(); } catch { signOut(); }
   } else if (back) { S.next = 'paymentDone'; S.mode = 'in'; S.info = 'Sign in to see your payment result.'; S.view = 'login'; }
   if (S.token && back) verifyReturn(); else draw();
   loadHotels().then(draw).catch(e => { S.hotelsError = e.message; S.loaded = true; draw(); });
