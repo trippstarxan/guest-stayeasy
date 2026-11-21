@@ -44,6 +44,41 @@ button.alt{background:none;color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--f
 .chip{display:inline-block;padding:.12rem .65rem;border-radius:99px;background:var(--soft);font-size:.82rem;font-weight:700}
 .big{font-weight:800;font-size:2.6rem;letter-spacing:-.03em}
 .link{background:none;border:0;color:var(--primary);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer;padding:0}.back{margin-bottom:.6rem;display:inline-block}
+
+/* Figma homepage layout */
+.home-intro{max-width:1200px;margin:0 auto}
+.home-hero{position:relative;isolation:isolate;min-height:560px;overflow:hidden;border-radius:0 0 18px 18px;margin:-1.2rem -1rem 0;padding:clamp(3rem,8vw,7.5rem) max(1.2rem,calc((100% - 1200px)/2));display:flex;flex-direction:column;justify-content:center;color:#fff;background:linear-gradient(105deg,rgba(48,40,50,.82),rgba(99,53,65,.58)),radial-gradient(ellipse at 78% 22%,#c18f91 0,transparent 36%),linear-gradient(135deg,#302832,#633541 58%,#899ba8)}
+.home-hero:after{content:"";position:absolute;z-index:-1;width:34rem;height:34rem;border:1px solid rgba(255,255,255,.18);border-radius:50%;right:4%;top:5%;box-shadow:0 0 0 48px rgba(255,255,255,.035),0 0 0 100px rgba(255,255,255,.025)}
+.home-hero .eyebrow{font-size:.8rem;letter-spacing:.12em}
+.home-hero h1{max-width:760px;font-size:clamp(2.7rem,7vw,5rem);line-height:1.08;letter-spacing:-.055em;margin:.9rem 0 1rem}
+.home-hero p{max-width:590px;color:#f0e8de;font-size:1.05rem;line-height:1.75}
+.home-hero .cta{margin-top:.5rem}
+.home-search{position:relative;z-index:2;max-width:1200px;margin:-3.2rem auto 4rem;padding:1.35rem;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 50px -30px rgba(48,40,50,.42);display:grid;grid-template-columns:1.25fr 1fr 1fr .8fr auto;gap:.8rem;align-items:end}
+.home-search label{font-size:.75rem;color:var(--slate);margin:0 0 .35rem}
+.home-search input,.home-search select{min-width:0;border:0;border-radius:8px;background:#f8f3ec;padding:.8rem .75rem;font-size:.9rem}
+.home-search button{margin:0;min-width:155px;border-radius:8px}
+.home-section{max-width:1200px;margin:0 auto 4rem}
+.home-section-head{display:flex;justify-content:space-between;align-items:end;gap:1rem;margin-bottom:1.4rem}
+.home-section-head p{margin:.35rem 0 0;color:var(--slate)}
+.home-kicker{font-size:.75rem;font-weight:800;letter-spacing:.13em;color:var(--primary);text-transform:uppercase}
+.home-featured{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.25rem}
+.home-featured .rc{margin:0}
+.home-featured .phw,.home-featured .ph{height:220px}
+.home-featured .rb{padding:1.2rem}
+.home-experiences{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.2rem}
+.experience{overflow:hidden;border-radius:14px;background:#fff;border:1px solid var(--line)}
+.experience-art{height:170px;background:linear-gradient(135deg,#d9c5ac,#c18f91 55%,#633541);position:relative;overflow:hidden}
+.experience:nth-child(2) .experience-art{background:linear-gradient(135deg,#899ba8,#d9c5ac 55%,#633541)}
+.experience:nth-child(3) .experience-art{background:linear-gradient(135deg,#302832,#899ba8 55%,#d9c5ac)}
+.experience-art:after{content:"";position:absolute;width:170px;height:170px;border:1px solid rgba(255,255,255,.45);border-radius:50%;right:12%;top:-35px;box-shadow:0 0 0 24px rgba(255,255,255,.08),0 0 0 50px rgba(255,255,255,.06)}
+.experience-body{padding:1.1rem 1.2rem 1.3rem}
+.experience-body h3{margin:0 0 .4rem}
+.experience-body p{color:var(--slate);margin:0}
+.home-close{background:var(--primary);color:#fff;border-radius:18px;padding:2.3rem;display:flex;justify-content:space-between;align-items:center;gap:1rem}
+.home-close p{color:#f0e8de;margin:.4rem 0 0}
+@media(max-width:900px){.home-search{grid-template-columns:repeat(2,minmax(0,1fr));margin:1rem 0 3rem}.home-search button{grid-column:1/-1}.home-featured,.home-experiences{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.home-hero{min-height:480px;margin-top:-1.2rem;padding:3.2rem 1.2rem}.home-search{grid-template-columns:1fr;margin:1rem 0 3rem}.home-search button{grid-column:auto}.home-featured,.home-experiences{grid-template-columns:1fr}.home-section-head{align-items:start;flex-direction:column}.home-close{align-items:start;flex-direction:column}}
+
 /* hero and home */
 .hero{position:relative;overflow:hidden;background:var(--primary);color:#fff;border-radius:28px;padding:clamp(2rem,6vw,4.5rem) clamp(1.3rem,5vw,3.5rem);min-height:min(72vh,540px);display:flex;flex-direction:column;justify-content:flex-end;margin-bottom:1.2rem}
 .eyebrow{font-size:.75rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--secondary);position:relative;z-index:1}
@@ -213,15 +248,34 @@ const stepper = n => `<ol class="stp" aria-label="Booking progress">${STEPS.map(
    Book path:  Home > Rooms > Room details > Booking details > Sign in/up > ID verification > Payment > Booking confirmation
    Pre-arrival path:  Home > Sign in/up > Dashboard > Pre-arrival check-in > Digital room access > Recommendations > Loyalty */
 const screens = {
-  home: () => `<section class="hero"><span class="eyebrow">StayEasy · Digital guest experience</span>
-    <h1 aria-label="Stay easy."><span class="ln"><i>Stay</i></span><span class="ln"><i>easy.</i></span></h1>
-    <p>Book your room, check in before you arrive and open your door from your phone.</p>
-    <div class="cta"><button class="btn" onclick="go('rooms')">Book now ${I('arrow')}</button><button class="btn ghost" onclick="go('dashboard')">Pre-arrival check-in</button></div>
-    <span class="orb o1"></span><span class="orb o2"></span></section>
-    <div class="marquee" aria-hidden="true"><div class="track">${[0, 1].map(() => ['Book', 'Check in', 'Unlock', 'Stay easy'].map(w => `<span>${w}</span>`).join('')).join('')}</div></div>
-    <h2 class="reveal">Three steps. No queues.</h2>
-    <div class="how">${[['01', 'Choose your room', 'Pick the dates and the room that suits you.'], ['02', 'Verify and pay', 'Confirm your ID and pay securely with Paystack.'], ['03', 'Check in and unlock', 'Check in online and get your room code.']]
-      .map(([n, t, d], i) => `<div class="card reveal" style="--d:${i}"><div class="num">${n}</div><h3>${t}</h3><p class="muted" style="margin:0">${d}</p></div>`).join('')}</div>`,
+  home: () => `<div class="home-intro">
+    <section class="home-hero">
+      <span class="eyebrow">Hotels · Suites · Experiences</span>
+      <h1>Arrive. Unwind.<br>Feel at home.</h1>
+      <p>Whether you’re here for a little getaway or a longer stay, we’d love to make you feel right at home. Come in, get comfortable and let us take care of the rest.</p>
+      <div class="cta"><button class="btn" onclick="go('rooms')">Explore rooms ${I('arrow')}</button><button class="btn ghost" onclick="go('dashboard')">Pre-arrival check-in</button></div>
+    </section>
+    <section class="home-search" aria-label="Search for a room">
+      <div><label for="homeHotel">Destination</label><select id="homeHotel" onchange="S.hotel=this.value;changeHotel(this.value)"><option value="">Select your destination</option>${S.hotels.map(h => `<option value="${sid(h._id)}" ${h._id===S.hotel?'selected':''}>${esc(h.name)}</option>`).join('')}</select></div>
+      <div><label for="homeFrom">Check-in</label><input id="homeFrom" type="date" min="${today()}" value="${S.from}" onchange="setFrom(this.value)"></div>
+      <div><label for="homeTo">Check-out</label><input id="homeTo" type="date" min="${S.from || today()}" value="${S.to}" onchange="S.to=this.value"></div>
+      <div><label for="homeGuests">Guests</label><select id="homeGuests" onchange="S.guests=+this.value"><option value="1" ${S.guests===1?'selected':''}>1 Adult</option><option value="2" ${S.guests===2?'selected':''}>2 Adults</option><option value="3" ${S.guests===3?'selected':''}>3 Adults</option><option value="4" ${S.guests===4?'selected':''}>4 Adults</option></select></div>
+      <button class="go" onclick="if(!S.hotel){S.error='Choose a destination first.';draw()}else if(!S.from||!S.to||new Date(S.to)<=new Date(S.from)){S.error='Choose valid check-in and check-out dates.';draw()}else go('rooms')">Search rooms</button>
+    </section>
+    <section class="home-section">
+      <div class="home-section-head"><div><span class="home-kicker">Featured rooms</span><h2>Find a room that feels like yours</h2><p>Your perfect stay starts with the right room.</p></div><button class="btn sm" onclick="go('rooms')">View all rooms ${I('arrow')}</button></div>
+      <div class="home-featured">${S.rooms.filter(r=>r.isAvailable!==false).slice(0,3).map((r,i)=>{const im=safeUrl([].concat(r.images||[])[0]);return `<article class="rc reveal" style="--d:${i}"><div class="phw"><div class="ph" ${im?`style="background-image:url('${im}')"`:''}>${im?'':I('bed')}</div></div><div class="rb"><div class="rt"><h3>${esc(r.roomType||'Room')}</h3><span class="chip">Room ${esc(r.roomNumber||'')}</span></div><p class="muted">${esc(r.description||'A comfortable room for your stay.')}</p><div class="rf"><div><span class="pr">${naira(r.pricePerNight)}</span><span class="muted"> / night</span><div class="muted sm">Up to ${r.capacity||2} guests</div></div><button class="btn sm" onclick="S.pick='${sid(r._id)}';go('roomDetail')">Explore ${I('arrow')}</button></div></div></article>`;}).join('') || '<p class="muted">Rooms will appear here when availability loads.</p>'}</div>
+    </section>
+    <section class="home-section">
+      <div class="home-section-head"><div><span class="home-kicker">More than just a stay</span><h2>Discover what makes your stay special.</h2><p>Enjoy thoughtful experiences throughout your visit.</p></div></div>
+      <div class="home-experiences">
+        <article class="experience"><div class="experience-art" aria-hidden="true"></div><div class="experience-body"><h3>Dining</h3><p>Good food, lovely company, lasting memories.</p></div></article>
+        <article class="experience"><div class="experience-art" aria-hidden="true"></div><div class="experience-body"><h3>Spa &amp; Wellness</h3><p>Your time to unwind.</p></div></article>
+        <article class="experience"><div class="experience-art" aria-hidden="true"></div><div class="experience-body"><h3>Airport &amp; Private Transfers</h3><p>Airport pickups, private rides and convoy services.</p></div></article>
+      </div>
+    </section>
+    <section class="home-section home-close"><div><h2>A stay that takes care of the details.</h2><p>Book your room, check in before you arrive and make the most of every stay.</p></div><button class="btn" onclick="go('rooms')">Book your stay ${I('arrow')}</button></section>
+  </div>`,
 
   notfound: () => `<div class="card"><h2>Page not found</h2><p class="muted">That address doesn't exist on StayEasy.</p><button class="go" onclick="history.replaceState({}, '', '/');go('home')">Go to the home page</button></div>`,
 
