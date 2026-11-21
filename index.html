@@ -161,11 +161,22 @@ async function call(path, { method = 'GET', body } = {}, attempt = 0) {
   const wake = document.getElementById('wake');
   const timer = setTimeout(() => { wake.hidden = false; }, 4000);   // free servers can sleep
   try {
-    const res = await fetch(API + path, {
-      method,
-      headers: { ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
-      body: body ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined
-    });
+    const controller = new AbortController();
+    const requestTimer = setTimeout(() => controller.abort(), 30000);
+    let res;
+    try {
+      res = await fetch(API + path, {
+        method,
+        headers: { ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
+        body: body ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined,
+        signal: controller.signal
+      });
+    } catch (e) {
+      if (e?.name === 'AbortError') throw new Error('The server did not respond within 30 seconds. It may be asleep or unavailable. Please try again in a moment.');
+      throw e;
+    } finally {
+      clearTimeout(requestTimer);
+    }
     let data = {}; try { data = await res.json(); } catch {}
     if ([502, 503, 504].includes(res.status)) {
       if (method === 'GET' && attempt < 3) { await wait(4000); return call(path, { method, body }, attempt + 1); }
